@@ -1,8 +1,16 @@
-use crate::errors::GatewayError;
-use crate::states::config::Config;
-use crate::states::events::EddyCrossChainSwap;
-use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use {
+    crate::{
+        errors::GatewayError,
+        states::{config::Config, events::EddyCrossChainSwap},
+        utils::prepare_account_metas_only_route_proxy,
+        CONFIG_SEED,
+    },
+    anchor_lang::{
+        prelude::*,
+        solana_program::{instruction::Instruction, program::invoke_signed},
+    },
+    anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer},
+};
 
 #[derive(Accounts)]
 pub struct OnCall<'info> {
@@ -10,10 +18,10 @@ pub struct OnCall<'info> {
     pub gateway: Signer<'info>,
 
     #[account(
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     #[account(mut)]
     pub from_token_account: Account<'info, TokenAccount>,
@@ -48,10 +56,11 @@ pub fn on_call(
 ) -> Result<()> {
     if ctx.accounts.to_mint.is_some() {
         require!(
-            ctx.accounts.program_to_token_account.is_some()
-                && ctx.accounts.program_to_token_account.unwrap().mint
-                    == ctx.accounts.to_mint.unwrap().key()
-                && ctx.accounts.user_token_account.mint == ctx.accounts.to_mint.unwrap().key()
+            ctx.accounts.program_to_token_account.as_ref().is_some()
+                && ctx.accounts.program_to_token_account.as_ref().unwrap().mint
+                    == ctx.accounts.to_mint.as_ref().unwrap().key()
+                && ctx.accounts.user_token_account.mint
+                    == ctx.accounts.to_mint.as_ref().unwrap().key()
                 && ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
             GatewayError::InvalidInstructionData
         );
@@ -63,14 +72,12 @@ pub fn on_call(
             GatewayError::InvalidInstructionData
         );
     }
-    let config = &ctx.accounts.config;
-    let gateway = &ctx.accounts.gateway;
 
     // Transfer tokens from gateway to program
     let cpi_accounts = Transfer {
         from: ctx.accounts.from_token_account.to_account_info(),
         to: ctx.accounts.program_from_token_account.to_account_info(),
-        authority: gateway.to_account_info(),
+        authority: ctx.accounts.gateway.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, amount)?;
@@ -80,7 +87,7 @@ pub fn on_call(
     if ctx.accounts.to_mint.is_some() {
         // Call DODO Route Proxy for token swap
         let account_metas =
-            prepare_account_metas_only_route_proxy(&ctx.remaining_accounts, &ctx.accounts.gateway)?;
+            prepare_account_metas_only_route_proxy(ctx.remaining_accounts, &ctx.accounts.gateway)?;
         let swap_ix = Instruction {
             program_id: ctx.accounts.dodo_route_proxy.key(),
             accounts: account_metas,
@@ -101,7 +108,7 @@ pub fn on_call(
     let cpi_accounts = Transfer {
         from: from_token_account.to_account_info(),
         to: ctx.accounts.user_token_account.to_account_info(),
-        authority: gateway.to_account_info(),
+        authority: ctx.accounts.gateway.to_account_info(),
     };
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, output_amount)?;
@@ -113,7 +120,9 @@ pub fn on_call(
         to_token: ctx
             .accounts
             .to_mint
-            .unwrap_or(&ctx.accounts.from_token_account.mint),
+            .as_ref()
+            .map(|m| m.key())
+            .unwrap_or(ctx.accounts.from_token_account.mint),
         amount,
         output_amount,
         wallet_address: ctx.accounts.user.key(),

@@ -1,14 +1,14 @@
 use crate::states::config::Config;
 use crate::states::events::{DodoRouteProxyUpdated, GatewayUpdated, OwnerUpdated};
+use crate::CONFIG_SEED;
 use anchor_lang::prelude::*;
-
 #[derive(Accounts)]
-pub struct InitializeConfig<'info> {
+pub struct CreateConfig<'info> {
     #[account(
         init,
         payer = owner,
         space = Config::LEN,
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump
     )]
     pub config: Account<'info, Config>,
@@ -23,7 +23,7 @@ pub struct InitializeConfig<'info> {
 pub struct UpdateGateway<'info> {
     #[account(
         mut,
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
         has_one = owner
     )]
@@ -36,7 +36,7 @@ pub struct UpdateGateway<'info> {
 pub struct UpdateDodoRouteProxy<'info> {
     #[account(
         mut,
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
         has_one = owner
     )]
@@ -49,7 +49,7 @@ pub struct UpdateDodoRouteProxy<'info> {
 pub struct UpdateOwner<'info> {
     #[account(
         mut,
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
         has_one = owner
     )]
@@ -58,8 +58,8 @@ pub struct UpdateOwner<'info> {
     pub owner: Signer<'info>,
 }
 
-pub fn initialize_config(
-    ctx: Context<InitializeConfig>,
+pub fn create_config(
+    ctx: Context<CreateConfig>,
     gateway: Pubkey,
     dodo_route_proxy: Pubkey,
 ) -> Result<()> {

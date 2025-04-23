@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+#[derive(Debug)]
 #[account]
 pub struct Config {
     /// owner admin
@@ -12,6 +13,8 @@ pub struct Config {
     pub is_initialized: bool,
     /// global nonce
     pub global_nonce: u64,
+    /// padding
+    pub padding: [u64; 64],
 }
 
 impl Config {

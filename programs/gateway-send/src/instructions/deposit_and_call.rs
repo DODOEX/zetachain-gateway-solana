@@ -1,9 +1,102 @@
-use crate::errors::GatewayError;
-use crate::states::config::Config;
-use crate::states::events::EddyCrossChainSwap;
-use anchor_lang::prelude::*;
-use anchor_lang::solana_program::program::invoke_signed;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use {
+    crate::{
+        errors::GatewayError, states::{config::Config, events::EddyCrossChainSwap}, utils::{prepare_account_metas, prepare_account_metas_only_gateway}, AUTHORITY_SEED, CONFIG_SEED
+    },
+    anchor_lang::{
+        prelude::*,
+        solana_program::{instruction::Instruction, program::invoke_signed},
+    },
+    anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer},
+};
+
+
+#[derive(Accounts)]
+pub struct DepositSolAndCall<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump,
+    )]
+    pub config: Box<Account<'info, Config>>,
+
+     #[account(mut, seeds = [AUTHORITY_SEED], bump)]
+    pub program_authority: SystemAccount<'info>,
+
+    #[account(address = config.gateway)]
+    pub gateway: AccountInfo<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn deposit_sol_and_call(
+    ctx: Context<DepositSolAndCall>,
+    amount: u64,
+    target_contract: [u8; 20],
+    payload: Vec<u8>,
+) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    config.global_nonce += 1;
+    let user = &ctx.accounts.user;
+
+    // Calculate external_id
+    let external_id = calc_external_id(ctx.program_id, &user.key(), config.global_nonce)?;
+
+    // Transfer sols from user to program
+    let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
+        &user.key(),
+        &ctx.accounts.program_authority.key(),
+        amount,
+    );
+    anchor_lang::solana_program::program::invoke(
+        &transfer_ix,
+        &[
+            user.to_account_info(),
+            ctx.accounts.program_authority.to_account_info(),
+        ],
+    )?;
+
+    // Prepare account metas
+    let account_metas = prepare_account_metas_only_gateway(ctx.remaining_accounts, user)?;
+
+    // Prepare data
+    let mut data = [113, 18, 133, 130, 202, 117, 53, 10].to_vec(); // handle_sol_with_call
+    let args = HandleSolWithCallArgs {
+        amount,
+        receiver: target_contract,
+        message: payload,
+        revert_options: None,
+        deposit_fee: 0,
+    };
+    data.extend(args.try_to_vec()?);
+
+    // Call Gateway's deposit_and_call
+    let gateway_ix = Instruction {
+        program_id: ctx.accounts.gateway.key(),
+        accounts: account_metas.clone(),
+        data,
+    };
+
+    invoke_signed(
+        &gateway_ix,
+        ctx.remaining_accounts,
+        &[&[AUTHORITY_SEED]],
+    )?;
+
+    // Emit event
+    emit!(EddyCrossChainSwap {
+        external_id,
+        from_token: Pubkey::default(),
+        to_token: Pubkey::default(),
+        amount,
+        output_amount: amount,
+        wallet_address: user.key(),
+    });
+
+    Ok(())
+}
 
 #[derive(Accounts)]
 pub struct DepositAndCall<'info> {
@@ -11,12 +104,16 @@ pub struct DepositAndCall<'info> {
     pub user: Signer<'info>,
 
     #[account(
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
     )]
     pub config: Account<'info, Config>,
 
-    #[account(mut)]
+    #[account(
+        mut,     
+        token::authority = user,
+        token::token_program = token_program,
+    )]
     pub user_from_token_account: Account<'info, TokenAccount>,
 
     #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", user_from_token_account.mint.as_ref()], bump)]
@@ -51,18 +148,18 @@ pub fn deposit_and_call(
     token::transfer(cpi_ctx, amount)?;
 
     // Prepare account metas
-    let account_metas = prepare_account_metas_only_gateway(&ctx.remaining_accounts, &user)?;
+    let account_metas = prepare_account_metas_only_gateway(ctx.remaining_accounts, &user)?;
 
     // Call Gateway's deposit_and_call
     let gateway_ix = Instruction {
         program_id: ctx.accounts.gateway.key(),
-        accounts: gateway_account_metas,
+        accounts: account_metas.clone(),
         data: payload,
     };
 
     invoke_signed(
         &gateway_ix,
-        &ctx.remaining_accounts[route_proxy_account_metas.len() + 2..],
+        &ctx.remaining_accounts[account_metas.len() + 2..],
         &[],
     )?;
 
@@ -85,7 +182,7 @@ pub struct DepositSwapAndCall<'info> {
     pub user: Signer<'info>,
 
     #[account(
-        seeds = [b"config"],
+        seeds = [CONFIG_SEED],
         bump,
     )]
     pub config: Account<'info, Config>,
@@ -137,17 +234,17 @@ pub fn deposit_swap_and_call(
 
     // Prepare account metas
     let (route_proxy_account_metas, gateway_account_metas) =
-        prepare_account_metas(&ctx.remaining_accounts, &user, &ctx.accounts.gateway.key())?;
+        prepare_account_metas(ctx.remaining_accounts, user, &ctx.accounts.gateway.key())?;
 
     // Call DODO Route Proxy for token swap
     let swap_ix = Instruction {
         program_id: ctx.accounts.dodo_route_proxy.key(),
-        accounts: route_proxy_account_metas,
+        accounts: route_proxy_account_metas.clone(),
         data: swap_data,
     };
     invoke_signed(
         &swap_ix,
-        &ctx.remaining_accounts[1..route_proxy_account_metas.len() + 1],
+        &ctx.remaining_accounts[1..route_proxy_account_metas.len() + 1], // remaining_accounts[0] is the swap result account
         &[],
     )
     .map_err(|_| GatewayError::RouteProxyCallFailed)?;
@@ -156,7 +253,7 @@ pub fn deposit_swap_and_call(
     let result = u64::from_le_bytes(result_data[..8].try_into().unwrap());
 
     // Decode output amount
-    let output_amount = u64::from_le_bytes(swap_result.try_into().unwrap());
+    let output_amount = result;
 
     // Call Gateway's deposit_and_call
     let gateway_ix = Instruction {
@@ -199,4 +296,22 @@ pub fn calc_external_id(
     let mut result = [0u8; 32];
     result.copy_from_slice(&hash_from_multiple.to_bytes());
     Ok(result)
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+struct HandleSolWithCallArgs {
+    pub amount: u64,
+    pub receiver: [u8; 20],
+    pub message: Vec<u8>,
+    pub revert_options: Option<RevertOptions>,
+    pub deposit_fee: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+struct RevertOptions {
+    pub revert_address: Pubkey,
+    pub abort_address: Pubkey,
+    pub call_on_revert: bool,
+    pub revert_message: Vec<u8>,
+    pub on_revert_gas_limit: u64,
 }
