@@ -1,11 +1,18 @@
-use crate::states::config::Config;
-use crate::states::events::{DodoRouteProxyUpdated, GatewayUpdated, OwnerUpdated};
-use crate::CONFIG_SEED;
+use crate::{
+    states::{
+        config::{Config, ConnectedPda},
+        events::{DodoRouteProxyUpdated, GatewayUpdated, OwnerUpdated},
+    },
+    CONFIG_SEED, CONNECTED_SEED,
+};
 use anchor_lang::prelude::*;
 #[derive(Accounts)]
 pub struct CreateConfig<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
     #[account(
-        init,
+        init_if_needed,
         payer = owner,
         space = Config::LEN,
         seeds = [CONFIG_SEED],
@@ -13,14 +20,22 @@ pub struct CreateConfig<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    #[account(mut)]
-    pub owner: Signer<'info>,
+    #[account(
+        init_if_needed, 
+        payer = owner, 
+        space = ConnectedPda::LEN,
+        seeds = [CONNECTED_SEED], 
+        bump
+    )]
+    pub connected_pda: Account<'info, ConnectedPda>,
 
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct UpdateGateway<'info> {
+    pub owner: Signer<'info>,
+
     #[account(
         mut,
         seeds = [CONFIG_SEED],
@@ -28,12 +43,12 @@ pub struct UpdateGateway<'info> {
         has_one = owner
     )]
     pub config: Account<'info, Config>,
-
-    pub owner: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct UpdateDodoRouteProxy<'info> {
+    pub owner: Signer<'info>,
+
     #[account(
         mut,
         seeds = [CONFIG_SEED],
@@ -41,12 +56,12 @@ pub struct UpdateDodoRouteProxy<'info> {
         has_one = owner
     )]
     pub config: Account<'info, Config>,
-
-    pub owner: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct UpdateOwner<'info> {
+    pub owner: Signer<'info>,
+
     #[account(
         mut,
         seeds = [CONFIG_SEED],
@@ -54,8 +69,6 @@ pub struct UpdateOwner<'info> {
         has_one = owner
     )]
     pub config: Account<'info, Config>,
-
-    pub owner: Signer<'info>,
 }
 
 pub fn create_config(

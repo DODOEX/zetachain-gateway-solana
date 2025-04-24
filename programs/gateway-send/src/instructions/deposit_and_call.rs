@@ -9,6 +9,8 @@ use {
     anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer},
 };
 
+/// Deposit fee used when depositing SOL or SPL tokens.
+pub const DEPOSIT_FEE: u64 = 2_000_000;
 
 #[derive(Accounts)]
 pub struct DepositSolAndCall<'info> {
@@ -27,7 +29,6 @@ pub struct DepositSolAndCall<'info> {
     #[account(address = config.gateway)]
     pub gateway: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -35,7 +36,7 @@ pub fn deposit_sol_and_call(
     ctx: Context<DepositSolAndCall>,
     amount: u64,
     target_contract: [u8; 20],
-    payload: Vec<u8>,
+    mut payload: Vec<u8>,
 ) -> Result<()> {
     let config = &mut ctx.accounts.config;
     config.global_nonce += 1;
@@ -43,12 +44,14 @@ pub fn deposit_sol_and_call(
 
     // Calculate external_id
     let external_id = calc_external_id(ctx.program_id, &user.key(), config.global_nonce)?;
+    // External id is the first 32 bytes of the payload
+    payload.splice(0..0, external_id.to_vec());
 
     // Transfer sols from user to program
     let transfer_ix = anchor_lang::solana_program::system_instruction::transfer(
         &user.key(),
         &ctx.accounts.program_authority.key(),
-        amount,
+        amount + DEPOSIT_FEE,
     );
     anchor_lang::solana_program::program::invoke(
         &transfer_ix,
@@ -62,13 +65,18 @@ pub fn deposit_sol_and_call(
     let account_metas = prepare_account_metas_only_gateway(ctx.remaining_accounts, user)?;
 
     // Prepare data
-    let mut data = [113, 18, 133, 130, 202, 117, 53, 10].to_vec(); // handle_sol_with_call
-    let args = HandleSolWithCallArgs {
+    let mut data = [65, 33, 186, 198, 114, 223, 133, 57].to_vec(); // deposit_and_call
+    let args = DepositAndCallArgs {
         amount,
         receiver: target_contract,
         message: payload,
-        revert_options: None,
-        deposit_fee: 0,
+        revert_options: Some(RevertOptions {
+            revert_address: *ctx.program_id,
+            abort_address: Pubkey::default(),
+            call_on_revert: true,
+            revert_message: Vec::new(),
+            on_revert_gas_limit: 0,
+        }),
     };
     data.extend(args.try_to_vec()?);
 
@@ -82,7 +90,7 @@ pub fn deposit_sol_and_call(
     invoke_signed(
         &gateway_ix,
         ctx.remaining_accounts,
-        &[&[AUTHORITY_SEED]],
+        &[&[AUTHORITY_SEED, &[ctx.bumps.program_authority]]],
     )?;
 
     // Emit event
@@ -281,6 +289,59 @@ pub fn deposit_swap_and_call(
     Ok(())
 }
 
+// #[derive(Accounts)]
+// pub struct OnCall<'info> {
+//     #[account(mut, seeds = [CONNECTED_SEED], bump)]
+//     pub pda: Account<'info, ConnectedPda>,
+
+//     /// CHECK: This is test program.
+//     pub gateway_pda: UncheckedAccount<'info>,
+
+//     /// CHECK: This is test program.
+//     pub random_wallet: UncheckedAccount<'info>,
+
+//     pub system_program: Program<'info, System>,
+// }
+
+// pub fn on_call(
+//     ctx: Context<OnCall>,
+//     amount: u64,
+//     sender: [u8; 20],
+//     data: Vec<u8>,
+// ) -> Result<()> {
+//     let pda = &mut ctx.accounts.pda;
+
+//     // Store the sender's public key
+//     pda.last_sender = sender;
+
+//     // Convert data to a string and store it
+//     let message = String::from_utf8(data).map_err(|_| OnRevertError::InvalidDataFormat)?;
+//     pda.last_message = message;
+
+//     // Transfer some portion of lamports transferred from gateway to another account
+//     pda.sub_lamports(amount / 2)?;
+//     ctx.accounts.random_wallet.add_lamports(amount / 2)?;
+
+//     // Check if the message contains "revert" and return an error if so
+//     if pda.last_message.contains("revert") {
+//         msg!(
+//             "Reverting transaction due to message: '{}'",
+//             pda.last_message
+//         );
+//         return Err(OnRevertError::RevertMessage.into());
+//     }
+
+//     msg!(
+//         "On call executed with amount {}, sender {:?} and message {}",
+//         amount,
+//         pda.last_sender,
+//         pda.last_message
+//     );
+
+//     Ok(())
+// }
+
+
 pub fn calc_external_id(
     program_id: &Pubkey,
     sender: &Pubkey,
@@ -299,12 +360,11 @@ pub fn calc_external_id(
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
-struct HandleSolWithCallArgs {
+struct DepositAndCallArgs {
     pub amount: u64,
     pub receiver: [u8; 20],
     pub message: Vec<u8>,
     pub revert_options: Option<RevertOptions>,
-    pub deposit_fee: u64,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]

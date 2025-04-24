@@ -53,13 +53,12 @@ pub fn prepare_account_metas_only_gateway(
     signer: &Signer,
 ) -> Result<Vec<AccountMeta>> {
     require!(
-        remaining_accounts.len() > 0,
+        !remaining_accounts.is_empty(),
         GatewayError::InvalidInstructionData
     );
     let mut account_metas = Vec::new();
 
-    // Skip first account as it is the route proxy result account
-    for account_info in remaining_accounts.iter() {
+    for (i, account_info) in remaining_accounts.iter().enumerate() {
         let account_key = account_info.key;
 
         // Prevent signer from being included
@@ -67,7 +66,11 @@ pub fn prepare_account_metas_only_gateway(
             account_key != signer.key,
             GatewayError::InvalidInstructionData
         );
-        let is_signer = account_info.is_signer;
+        let mut is_signer = account_info.is_signer;
+        // first account is signer
+        if i == 0 {
+            is_signer = true;
+        }
         if account_info.is_writable {
             account_metas.push(AccountMeta::new(*account_key, is_signer));
         } else {

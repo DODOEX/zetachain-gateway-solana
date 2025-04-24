@@ -9,3 +9,11 @@ pub enum GatewayError {
     #[msg("Invalid instruction data")]
     InvalidInstructionData,
 }
+
+#[error_code]
+pub enum OnRevertError {
+    #[msg("Invalid data format")]
+    InvalidDataFormat,
+    #[msg("Revert message")]
+    RevertMessage,
+}

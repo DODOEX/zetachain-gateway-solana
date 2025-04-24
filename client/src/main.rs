@@ -20,11 +20,8 @@ use anchor_spl::{
     token_2022::spl_token_2022,
 };
 use anyhow::{format_err, Result};
-use base64::Engine;
-use borsh::BorshDeserialize;
 use clap::Parser;
 use configparser::ini::Ini;
-use hex;
 use instructions::{
     gateway_send_instructions::deposit_sol_and_call_instr,
     lookup_table_instructions::{
@@ -38,13 +35,16 @@ use instructions::{
 use rand::rngs::OsRng;
 use spl_token_client::{spl_token_2022::state::AccountState, token::ExtensionInitializationParams};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ClientConfig {
     http_url: String,
     ws_url: String,
     payer_path: String,
     admin_path: String,
     gateway_send_program: Pubkey,
+    gateway_program: Pubkey,
+    sol_solana_zrc20: EvmAddress,
+    gateway_transfer_native: EvmAddress,
 }
 
 fn main() -> Result<()> {
@@ -149,11 +149,12 @@ fn main() -> Result<()> {
             };
             println!("Signature: {:?}", signature);
         }
-        CommandsName::DepositSolAndCall {
-            amount,
-            target_contract,
-            payload,
-        } => {
+        CommandsName::DepositSolAndCall { amount, receiver } => {
+            let target_contract = &client_config.gateway_transfer_native;
+            let zrc20 = &client_config.sol_solana_zrc20;
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&receiver.0);
+            payload.extend_from_slice(&zrc20.0);
             let ix =
                 deposit_sol_and_call_instr(&client_config, amount, target_contract.0, payload)?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
@@ -554,6 +555,21 @@ fn load_cfg(client_config: &String) -> Result<ClientConfig> {
         panic!("gateway_send_program must not be empty");
     }
     let gateway_send_program = Pubkey::from_str(&gateway_send_program_str).unwrap();
+    let gateway_program_str = config.get("Global", "gateway_program").unwrap();
+    if gateway_program_str.is_empty() {
+        panic!("gateway_program must not be empty");
+    }
+    let gateway_program = Pubkey::from_str(&gateway_program_str).unwrap();
+    let sol_solana_zrc20_str = config.get("Global", "sol_solana_zrc20").unwrap();
+    if sol_solana_zrc20_str.is_empty() {
+        panic!("sol_solana_zrc20 must not be empty");
+    }
+    let sol_solana_zrc20 = EvmAddress::from_str(&sol_solana_zrc20_str).unwrap();
+    let gateway_transfer_native_str = config.get("Global", "gateway_transfer_native").unwrap();
+    if gateway_transfer_native_str.is_empty() {
+        panic!("gateway_transfer_native must not be empty");
+    }
+    let gateway_transfer_native = EvmAddress::from_str(&gateway_transfer_native_str).unwrap();
 
     Ok(ClientConfig {
         http_url,
@@ -561,6 +577,9 @@ fn load_cfg(client_config: &String) -> Result<ClientConfig> {
         payer_path,
         admin_path,
         gateway_send_program,
+        gateway_program,
+        sol_solana_zrc20,
+        gateway_transfer_native,
     })
 }
 
@@ -588,8 +607,7 @@ pub enum CommandsName {
     },
     DepositSolAndCall {
         amount: u64,
-        target_contract: EvmAddress,
-        payload: Vec<u8>,
+        receiver: EvmAddress,
     },
     DepositAndCall {
         amount: u64,

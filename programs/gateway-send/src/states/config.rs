@@ -20,3 +20,15 @@ pub struct Config {
 impl Config {
     pub const LEN: usize = 8 + std::mem::size_of::<Self>();
 }
+
+#[account]
+pub struct ConnectedPda {
+    pub last_sender: [u8; 20],
+    pub last_message: String,
+    pub last_revert_sender: Pubkey,
+    pub last_revert_message: String,
+}
+
+impl ConnectedPda {
+    pub const LEN: usize = 8 + std::mem::size_of::<Self>();
+}

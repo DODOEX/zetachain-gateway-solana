@@ -9,6 +9,8 @@ declare_id!("CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK");
 
 pub const CONFIG_SEED: &[u8] = b"config";
 pub const AUTHORITY_SEED: &[u8] = b"authority";
+// zetachain use this
+pub const CONNECTED_SEED: &[u8] = b"connected";
 
 #[program]
 pub mod gateway_send {

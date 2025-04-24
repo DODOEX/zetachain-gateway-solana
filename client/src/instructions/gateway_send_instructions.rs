@@ -129,12 +129,19 @@ pub fn deposit_sol_and_call_instr(
         payload,
     };
 
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
+
     let instruction = Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(config_pda, false),
             AccountMeta::new(program_authority, false),
+            AccountMeta::new(config.gateway_program, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+            // remaining accounts, gateway deposit with call accounts
+            AccountMeta::new(program_authority, false),
+            AccountMeta::new(gateway_meta, false),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
         data: {
