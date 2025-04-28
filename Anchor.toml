@@ -16,7 +16,7 @@ url = "https://api.apr.dev"
 [provider]
 #cluster = "Localnet"
 #wallet = "~/.config/solana/id.json"
-cluster = "https://rpc.ankr.com/solana_devnet/166cf31fc032539c1bbebb3316fbf0a2e676191b9cbe0c36d91da41fe4db62d8"
+cluster = "https://api.devnet.solana.com"
 wallet = "~/.config/solana/test_id.json"
 
 [scripts]

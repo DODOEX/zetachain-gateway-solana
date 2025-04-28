@@ -360,15 +360,24 @@ pub fn calc_external_id(
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
-struct DepositAndCallArgs {
+pub struct DepositArgs {
+    pub amount: u64,
+    pub receiver: [u8; 20],
+    pub revert_options: Option<RevertOptions>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct DepositAndCallArgs {
     pub amount: u64,
     pub receiver: [u8; 20],
     pub message: Vec<u8>,
     pub revert_options: Option<RevertOptions>,
 }
 
+pub type DepositSplAndCallArgs = DepositAndCallArgs;
+
 #[derive(AnchorSerialize, AnchorDeserialize)]
-struct RevertOptions {
+pub struct RevertOptions {
     pub revert_address: Pubkey,
     pub abort_address: Pubkey,
     pub call_on_revert: bool,

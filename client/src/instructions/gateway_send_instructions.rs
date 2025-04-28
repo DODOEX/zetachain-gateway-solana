@@ -5,8 +5,14 @@ use anchor_client::{
         system_program,
     },
 };
+use anchor_spl::associated_token::spl_associated_token_account;
 use anyhow::Result;
-use gateway_send::{AUTHORITY_SEED, CONFIG_SEED};
+use gateway_send::{
+    gateway_send::{
+        calc_external_id, DepositAndCallArgs, DepositArgs, DepositSplAndCallArgs, RevertOptions,
+    },
+    AUTHORITY_SEED, CONFIG_SEED,
+};
 
 use crate::{read_keypair_file, ClientConfig};
 
@@ -221,106 +227,142 @@ pub fn deposit_swap_and_call_instr(
     Ok(vec![instruction])
 }
 
-// pub fn send_instr(
-//     config: &ClientConfig,
-//     token_mint: Pubkey,
-//     token_account: Pubkey,
-//     dst_chain: u32,
-//     unique_message_account_keypair: &Keypair,
-// ) -> Result<Vec<Instruction>> {
-//     let payer = read_keypair_file(&config.payer_path)?;
-//     let program_id = config.gateway_send_program;
+pub fn deposit_sol_gateway_instr(
+    config: &ClientConfig,
+    amount: u64,
+    receiver: [u8; 20],
+) -> Result<Vec<Instruction>> {
+    let payer = read_keypair_file(&config.payer_path)?;
+    let program_id = config.gateway_program;
 
-//     let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
-//     let (other_chain_tokens_pda, _) = Pubkey::find_program_address(
-//         &[
-//             b"other_chain_tokens",
-//             &dst_chain.to_le_bytes(),
-//             token_mint.as_ref(),
-//         ],
-//         &program_id,
-//     );
-//     let (token_allowed_pda, _) =
-//         Pubkey::find_program_address(&[b"tokens", token_mint.as_ref()], &program_id);
-//     let (program_authority_pda, _) =
-//         Pubkey::find_program_address(&[PROGRAM_AUTHORITY_SEED], &program_id);
-//     // 计算ata地址
-//     let program_token_account = get_associated_token_address(&program_authority_pda, &token_mint);
+    let ix_data = DepositArgs {
+        amount,
+        receiver,
+        revert_options: Some(RevertOptions {
+            revert_address: payer.pubkey(),
+            abort_address: Pubkey::default(),
+            call_on_revert: true,
+            revert_message: Vec::new(),
+            on_revert_gas_limit: 0,
+        }),
+    };
 
-//     let (storage_pda, _) = Pubkey::find_program_address(&[HYPERLANE_STORAGE_SEED], &program_id);
-//     let (outbox_account, _outbox_bump) =
-//         Pubkey::find_program_address(&[b"hyperlane", b"-", b"outbox"], &config.hyperlane_mailbox);
-//     let (dispatch_authority_key, _dispatch_authority_bump) = Pubkey::find_program_address(
-//         &[b"hyperlane_dispatcher", b"-", b"dispatch_authority"],
-//         &program_id,
-//     );
-//     let (dispatched_message_account_key, _dispatched_message_bump) = Pubkey::find_program_address(
-//         &[
-//             b"hyperlane",
-//             b"-",
-//             b"dispatched_message",
-//             b"-",
-//             (unique_message_account_keypair.pubkey().as_ref()),
-//         ],
-//         &config.hyperlane_mailbox,
-//     );
-//     let (igp_program_data_account_key, _igp_program_data_bump) = Pubkey::find_program_address(
-//         &[b"hyperlane_igp", b"-", b"program_data"],
-//         &config.hyperlane_igp,
-//     );
-//     let (gas_payment_key, _) = Pubkey::find_program_address(
-//         &[
-//             b"hyperlane_igp",
-//             b"-",
-//             b"gas_payment",
-//             b"-",
-//             unique_message_account_keypair.pubkey().as_ref(),
-//         ],
-//         &config.hyperlane_igp,
-//     );
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
 
-//     // 使用 Anchor 生成 discriminator
-//     let ix_data = gateway_send::instruction::Send {
-//         dst_chain: 53456,
-//         receiver: H256::from_hex("0x4b37ff61e17ddcd4cea80af768de9455fc373764").unwrap(),
-//         amount: 1000000,
-//         min_receive_amount: 1000000,
-//         // target: H256::from_hex("0x3af0a7d5a4fde890b662f6af6e7ad05ead2ebfa5").unwrap(),
-//         composer: H256::default(),
-//         data: vec![],
-//     };
-//     let instruction = Instruction {
-//         program_id,
-//         data: {
-//             let mut data = gateway_send::instruction::Send::DISCRIMINATOR.to_vec();
-//             data.extend(ix_data.try_to_vec().unwrap());
-//             data
-//         },
-//         accounts: vec![
-//             AccountMeta::new(payer.pubkey(), true),
-//             AccountMeta::new(token_mint, false),
-//             AccountMeta::new(token_account, false),
-//             AccountMeta::new(config_pda, false),
-//             AccountMeta::new(other_chain_tokens_pda, false),
-//             AccountMeta::new(token_allowed_pda, false),
-//             AccountMeta::new(program_authority_pda, false),
-//             AccountMeta::new(program_token_account, false),
-//             AccountMeta::new(storage_pda, false),
-//             AccountMeta::new(dispatch_authority_key, false),
-//             AccountMeta::new_readonly(token::ID, false),
-//             AccountMeta::new_readonly(associated_token::ID, false),
-//             AccountMeta::new_readonly(system_program::id(), false),
-//             // remaining accounts
-//             AccountMeta::new(outbox_account, false),
-//             AccountMeta::new(unique_message_account_keypair.pubkey(), true),
-//             AccountMeta::new(dispatched_message_account_key, false),
-//             AccountMeta::new(igp_program_data_account_key, false),
-//             AccountMeta::new(gas_payment_key, false),
-//             AccountMeta::new_readonly(config.hyperlane_igp, false),
-//             AccountMeta::new_readonly(spl_noop::id(), false),
-//             AccountMeta::new_readonly(config.hyperlane_mailbox, false),
-//         ],
-//     };
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(gateway_meta, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: {
+            let mut data = [242, 35, 198, 137, 82, 225, 242, 182].to_vec(); // deposit
+            data.extend(ix_data.try_to_vec().unwrap());
+            data
+        },
+    };
+    Ok(vec![instruction])
+}
 
-//     Ok(vec![instruction])
-// }
+pub fn deposit_sol_and_call_gateway_instr(
+    config: &ClientConfig,
+    amount: u64,
+    target_contract: [u8; 20],
+    payload: Vec<u8>,
+) -> Result<Vec<Instruction>> {
+    let payer = read_keypair_file(&config.payer_path)?;
+    let program_id = config.gateway_program;
+
+    // 随机生成一个32字节的external_id
+    let external_id: [u8; 32] = rand::random();
+    let mut payload = payload;
+    payload.splice(0..0, external_id.to_vec());
+
+    let ix_data = DepositAndCallArgs {
+        amount,
+        receiver: target_contract,
+        message: payload,
+        revert_options: Some(RevertOptions {
+            revert_address: payer.pubkey(),
+            abort_address: Pubkey::default(),
+            call_on_revert: true,
+            revert_message: Vec::new(),
+            on_revert_gas_limit: 0,
+        }),
+    };
+
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(gateway_meta, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: {
+            let mut data = [65, 33, 186, 198, 114, 223, 133, 57].to_vec(); // deposit_and_call
+            data.extend(ix_data.try_to_vec().unwrap());
+            data
+        },
+    };
+    Ok(vec![instruction])
+}
+
+pub fn deposit_spl_and_call_gateway_instr(
+    config: &ClientConfig,
+    mint: Pubkey,
+    amount: u64,
+    target_contract: [u8; 20],
+    payload: Vec<u8>,
+) -> Result<Vec<Instruction>> {
+    let payer = read_keypair_file(&config.payer_path)?;
+    let program_id = config.gateway_program;
+
+    // 随机生成一个32字节的external_id
+    let external_id: [u8; 32] = rand::random();
+    let mut payload = payload;
+    payload.splice(0..0, external_id.to_vec());
+
+    let ix_data = DepositSplAndCallArgs {
+        amount,
+        receiver: target_contract,
+        message: payload,
+        revert_options: Some(RevertOptions {
+            revert_address: payer.pubkey(),
+            abort_address: Pubkey::default(),
+            call_on_revert: true,
+            revert_message: Vec::new(),
+            on_revert_gas_limit: 0,
+        }),
+    };
+
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
+    let (whitelisted_mint, _) =
+        Pubkey::find_program_address(&[b"whitelist", mint.as_ref()], &program_id);
+    let payer_token_account =
+        spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+    let program_token_account =
+        spl_associated_token_account::get_associated_token_address(&gateway_meta, &mint);
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(gateway_meta, false),
+            AccountMeta::new(whitelisted_mint, false),
+            AccountMeta::new(mint, false),
+            AccountMeta::new(anchor_spl::token::ID, false),
+            AccountMeta::new(payer_token_account, false),
+            AccountMeta::new(program_token_account, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: {
+            let mut data = [14, 181, 27, 187, 171, 61, 237, 147].to_vec(); // deposit_spl_token_and_call
+            data.extend(ix_data.try_to_vec().unwrap());
+            data
+        },
+    };
+    Ok(vec![instruction])
+}

@@ -23,7 +23,10 @@ use anyhow::{format_err, Result};
 use clap::Parser;
 use configparser::ini::Ini;
 use instructions::{
-    gateway_send_instructions::deposit_sol_and_call_instr,
+    gateway_send_instructions::{
+        deposit_sol_and_call_gateway_instr, deposit_sol_and_call_instr, deposit_sol_gateway_instr,
+        deposit_spl_and_call_gateway_instr,
+    },
     lookup_table_instructions::{
         create_lookup_table_instr, deserialize_lookup_table, extend_lookup_table_instr,
     },
@@ -226,37 +229,85 @@ fn main() -> Result<()> {
             };
             println!("Signature: {:?}", signature);
         }
-        // CommandsName::Send {
-        //     token_mint,
-        //     token_account,
-        //     dst_chain,
-        // } => {
-        //     let unique_message_account_keypair = Keypair::new();
-        //     let ix = send_instr(
-        //         &client_config,
-        //         token_mint,
-        //         token_account,
-        //         dst_chain,
-        //         &unique_message_account_keypair,
-        //     )?;
-        //     let compute_unit_ix = ComputeBudgetInstruction::set_compute_unit_limit(400_000);
-        //     let priority_ix = ComputeBudgetInstruction::set_compute_unit_price(1);
-        //     let recent_blockhash = rpc_client.get_latest_blockhash()?;
-        //     let transaction = Transaction::new_signed_with_payer(
-        //         &[compute_unit_ix, priority_ix, ix[0].clone()],
-        //         Some(&payer.pubkey()),
-        //         &[&payer, &unique_message_account_keypair],
-        //         recent_blockhash,
-        //     );
-        //     let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
-        //         Ok(sig) => sig,
-        //         Err(err) => {
-        //             println!("Error: {:?}", err);
-        //             return Err(err.into());
-        //         }
-        //     };
-        //     println!("Signature: {:?}", signature);
-        // }
+        CommandsName::DepositSolGateway { amount, receiver } => {
+            let ix = deposit_sol_gateway_instr(&client_config, amount, receiver.0)?;
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
+        CommandsName::DepositSolAndCallGateway { amount, receiver } => {
+            let target_contract = &client_config.gateway_transfer_native;
+            let zrc20 = &client_config.sol_solana_zrc20;
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&receiver.0);
+            payload.extend_from_slice(&zrc20.0);
+            let ix = deposit_sol_and_call_gateway_instr(
+                &client_config,
+                amount,
+                target_contract.0,
+                payload,
+            )?;
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
+        CommandsName::DepositSplAndCallGateway {
+            mint,
+            zrc20,
+            amount,
+            receiver,
+        } => {
+            let target_contract = &client_config.gateway_transfer_native;
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&receiver.0);
+            payload.extend_from_slice(&zrc20.0);
+            let ix = deposit_spl_and_call_gateway_instr(
+                &client_config,
+                mint,
+                amount,
+                target_contract.0,
+                payload,
+            )?;
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
         CommandsName::NewMint {
             authority,
             decimals,
@@ -620,6 +671,20 @@ pub enum CommandsName {
         target_contract: Pubkey,
         asset: Pubkey,
         payload: Vec<u8>,
+    },
+    DepositSolGateway {
+        amount: u64,
+        receiver: EvmAddress,
+    },
+    DepositSolAndCallGateway {
+        amount: u64,
+        receiver: EvmAddress,
+    },
+    DepositSplAndCallGateway {
+        mint: Pubkey,
+        zrc20: EvmAddress,
+        amount: u64,
+        receiver: EvmAddress,
     },
     NewMint {
         #[arg(short, long, default_value = "9")]
