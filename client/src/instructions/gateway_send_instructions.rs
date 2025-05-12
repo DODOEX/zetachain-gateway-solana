@@ -457,7 +457,14 @@ mod tests {
 
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
-        let payload = vec![1, 2, 3, 4, 5];
+        let mut payload = vec![];
+        payload.extend_from_slice(&external_id);
+        payload.extend_from_slice(
+            &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
+                .unwrap()
+                .0,
+        );
+        payload.extend_from_slice(&config.sol_solana_zrc20.0);
 
         let instructions = deposit_sol_and_call_gateway_instr(
             &config,
@@ -467,12 +474,15 @@ mod tests {
             Some(external_id),
         )
         .unwrap();
-        let transaction = Transaction::new_with_payer(&instructions, Some(&Pubkey::default()));
+        let transaction = Transaction::new_with_payer(
+            &instructions,
+            Some(&Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap()),
+        );
 
         let data = transaction.message.serialize();
         let data_base64 = base64::engine::general_purpose::STANDARD.encode(data);
 
-        let expected_data = "AgABBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAArl1dPXkIuWhzYVhFtYxb+JQ3GoZqa2pq14bW0E52rOIYoUwf9P3NuRmq25/CNAzFBHlg24mTAVRAnMzfmmW7QghBy5DHwXY2oh7LR9Ulmj0f6s9aTLB7QPRVejXMW2vIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwMBAgCbAUEhusZy34U5QEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqCUAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxQECAwQFAa5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA";
+        let expected_data = "AQACBK5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziGKFMH/T9zbkZqtufwjQMxQR5YNuJkwFUQJzM35plu0IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhBy5DHwXY2oh7LR9Ulmj0f6s9aTLB7QPRVejXMW2vIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwMAAQLeAUEhusZy34U5QEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqGgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxdJjjKEhAnU2+AtpCT6D66aLP/EfklOvUUspr/vXv6HFSzf/YeF93NTOqAr3aN6UVfw3N2St9z66PrqnJU6FlUmkTHTvfP91AQGuXV09eQi5aHNhWEW1jFv4lDcahmpramrXhtbQTnas4gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAA==";
         assert_eq!(data_base64, expected_data);
     }
 
@@ -483,7 +493,18 @@ mod tests {
 
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
-        let payload = vec![1, 2, 3, 4, 5];
+        let mut payload = vec![];
+        payload.extend_from_slice(&external_id);
+        payload.extend_from_slice(
+            &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
+                .unwrap()
+                .0,
+        );
+        payload.extend_from_slice(
+            &EvmAddress::from_str("0xD10932EB3616a937bd4a2652c87E9FeBbAce53e5")
+                .unwrap()
+                .0,
+        );
 
         let instructions = deposit_spl_and_call_gateway_instr(
             &config,
@@ -494,12 +515,15 @@ mod tests {
             Some(external_id),
         )
         .unwrap();
-        let transaction = Transaction::new_with_payer(&instructions, Some(&Pubkey::default()));
+        let transaction = Transaction::new_with_payer(
+            &instructions,
+            Some(&Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap()),
+        );
 
         let data = transaction.message.serialize();
         let data_base64 = base64::engine::general_purpose::STANDARD.encode(data);
 
-        let expected_data = "AgABCQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAArl1dPXkIuWhzYVhFtYxb+JQ3GoZqa2pq14bW0E52rOIG3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqRihTB/0/c25Garbn8I0DMUEeWDbiZMBVECczN+aZbtCKQPQSxXzzKRqYQQMX2urb+4v9zWi511Z1ZZBtv5hJXB8TvP6cPZdTOopgF+Opm5mL2azwT/yYX8dN7NxBaxxur9UVM4qwrPIx82jotyrvb3ctEfVMecEWOyKl1EBdNEi6Sg5VQll/9TWSsqvRtRd9zGOW09XyQxIfWBiXYKbg3sIQcuQx8F2NqIey0fVJZo9H+rPWkywe0D0VXo1zFtryAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgIAQMEBwIFBgCbAQ61G7urPe2TQEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqCUAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxQECAwQFAa5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAA";
+        let expected_data = "AQACCa5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziBt324ddloZPZy+FGzut5rBy0he1fWzeROoz1hX7/AKkYoUwf9P3NuRmq25/CNAzFBHlg24mTAVRAnMzfmmW7QikD0EsV88ykamEEDF9rq2/uL/c1ouddWdWWQbb+YSVwfE7z+nD2XUzqKYBfjqZuZi9ms8E/8mF/HTezcQWscbq/VFTOKsKzyMfNo6Lcq7293LRH1THnBFjsipdRAXTRIukoOVUJZf/U1krKr0bUXfcxjltPV8kMSH1gYl2Cm4N7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIQcuQx8F2NqIey0fVJZo9H+rPWkywe0D0VXo1zFtryAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgIAAIDBgEEBQfeAQ61G7urPe2TQEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqGgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxdJjjKEhAnU2+AtpCT6D66aLP/EfklOvUUspr/vXv6HFSzf/YeF93NTOqAr3aN6UVfw3N2TRCTLrNhapN71KJlLIfp/rus5T5QGuXV09eQi5aHNhWEW1jFv4lDcahmpramrXhtbQTnas4gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAA==";
         assert_eq!(data_base64, expected_data);
     }
 }
