@@ -1,10 +1,9 @@
 mod instructions;
 
 use crate::instructions::gateway_send_instructions::{
-    create_config_instr, deposit_and_call_instr, deposit_swap_and_call_instr,
-    update_dodo_route_proxy_instr, update_gateway_instr, update_owner_instr,
+    create_config_instr, update_dodo_route_proxy_instr, update_gateway_instr, update_owner_instr,
 };
-use gateway_send::states::config::Config;
+use gateway_send::{states::config::Config, CONFIG_SEED};
 
 use std::{rc::Rc, str::FromStr};
 
@@ -24,8 +23,8 @@ use clap::Parser;
 use configparser::ini::Ini;
 use instructions::{
     gateway_send_instructions::{
-        deposit_sol_and_call_gateway_instr, deposit_sol_and_call_instr, deposit_sol_gateway_instr,
-        deposit_spl_and_call_gateway_instr,
+        close_config_instr, deposit_sol_and_call_gateway_instr, deposit_sol_gateway_instr,
+        deposit_spl_and_call_gateway_instr, update_gas_limit_instr,
     },
     lookup_table_instructions::{
         create_lookup_table_instr, deserialize_lookup_table, extend_lookup_table_instr,
@@ -91,7 +90,7 @@ fn main() -> Result<()> {
             println!("Signature: {:?}", signature);
         }
         CommandsName::CheckConfig {} => {
-            let (config_pda, _) = Pubkey::find_program_address(&[b"config"], &program.id());
+            let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program.id());
             println!("pda {}", config_pda);
             let account = rpc_client.get_account(&config_pda)?;
             let mut data = account.data.as_slice();
@@ -134,6 +133,24 @@ fn main() -> Result<()> {
             };
             println!("Signature: {:?}", signature);
         }
+        CommandsName::UpdateGasLimit { new_gas_limit } => {
+            let ix = update_gas_limit_instr(&client_config, new_gas_limit)?;
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
         CommandsName::UpdateOwner { new_owner } => {
             let ix = update_owner_instr(&client_config, new_owner)?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
@@ -152,14 +169,8 @@ fn main() -> Result<()> {
             };
             println!("Signature: {:?}", signature);
         }
-        CommandsName::DepositSolAndCall { amount, receiver } => {
-            let target_contract = &client_config.gateway_transfer_native;
-            let zrc20 = &client_config.sol_solana_zrc20;
-            let mut payload = Vec::new();
-            payload.extend_from_slice(&receiver.0);
-            payload.extend_from_slice(&zrc20.0);
-            let ix =
-                deposit_sol_and_call_instr(&client_config, amount, target_contract.0, payload)?;
+        CommandsName::CloseConfig {} => {
+            let ix = close_config_instr(&client_config)?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
             let transaction = Transaction::new_signed_with_payer(
                 &ix,
@@ -176,59 +187,84 @@ fn main() -> Result<()> {
             };
             println!("Signature: {:?}", signature);
         }
-        CommandsName::DepositAndCall {
-            amount,
-            target_contract,
-            payload,
-        } => {
-            let ix = deposit_and_call_instr(&client_config, amount, target_contract, payload)?;
-            let recent_blockhash = rpc_client.get_latest_blockhash()?;
-            let transaction = Transaction::new_signed_with_payer(
-                &ix,
-                Some(&payer.pubkey()),
-                &[&payer],
-                recent_blockhash,
-            );
-            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
-                Ok(sig) => sig,
-                Err(err) => {
-                    println!("Error: {:?}", err);
-                    return Err(err.into());
-                }
-            };
-            println!("Signature: {:?}", signature);
-        }
-        CommandsName::DepositSwapAndCall {
-            amount,
-            swap_data,
-            target_contract,
-            asset,
-            payload,
-        } => {
-            let ix = deposit_swap_and_call_instr(
-                &client_config,
-                amount,
-                swap_data,
-                target_contract,
-                asset,
-                payload,
-            )?;
-            let recent_blockhash = rpc_client.get_latest_blockhash()?;
-            let transaction = Transaction::new_signed_with_payer(
-                &ix,
-                Some(&payer.pubkey()),
-                &[&payer],
-                recent_blockhash,
-            );
-            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
-                Ok(sig) => sig,
-                Err(err) => {
-                    println!("Error: {:?}", err);
-                    return Err(err.into());
-                }
-            };
-            println!("Signature: {:?}", signature);
-        }
+
+        // CommandsName::DepositSolAndCall { amount, receiver } => {
+        //     let target_contract = &client_config.gateway_transfer_native;
+        //     let zrc20 = &client_config.sol_solana_zrc20;
+        //     let mut payload = Vec::new();
+        //     payload.extend_from_slice(&receiver.0);
+        //     payload.extend_from_slice(&zrc20.0);
+        //     let ix =
+        //         deposit_sol_and_call_instr(&client_config, amount, target_contract.0, payload)?;
+        //     let recent_blockhash = rpc_client.get_latest_blockhash()?;
+        //     let transaction = Transaction::new_signed_with_payer(
+        //         &ix,
+        //         Some(&payer.pubkey()),
+        //         &[&payer],
+        //         recent_blockhash,
+        //     );
+        //     let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+        //         Ok(sig) => sig,
+        //         Err(err) => {
+        //             println!("Error: {:?}", err);
+        //             return Err(err.into());
+        //         }
+        //     };
+        //     println!("Signature: {:?}", signature);
+        // }
+        // CommandsName::DepositAndCall {
+        //     amount,
+        //     target_contract,
+        //     payload,
+        // } => {
+        //     let ix = deposit_and_call_instr(&client_config, amount, target_contract, payload)?;
+        //     let recent_blockhash = rpc_client.get_latest_blockhash()?;
+        //     let transaction = Transaction::new_signed_with_payer(
+        //         &ix,
+        //         Some(&payer.pubkey()),
+        //         &[&payer],
+        //         recent_blockhash,
+        //     );
+        //     let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+        //         Ok(sig) => sig,
+        //         Err(err) => {
+        //             println!("Error: {:?}", err);
+        //             return Err(err.into());
+        //         }
+        //     };
+        //     println!("Signature: {:?}", signature);
+        // }
+        // CommandsName::DepositSwapAndCall {
+        //     amount,
+        //     swap_data,
+        //     target_contract,
+        //     asset,
+        //     payload,
+        // } => {
+        //     let ix = deposit_swap_and_call_instr(
+        //         &client_config,
+        //         amount,
+        //         swap_data,
+        //         target_contract,
+        //         asset,
+        //         payload,
+        //     )?;
+        //     let recent_blockhash = rpc_client.get_latest_blockhash()?;
+        //     let transaction = Transaction::new_signed_with_payer(
+        //         &ix,
+        //         Some(&payer.pubkey()),
+        //         &[&payer],
+        //         recent_blockhash,
+        //     );
+        //     let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+        //         Ok(sig) => sig,
+        //         Err(err) => {
+        //             println!("Error: {:?}", err);
+        //             return Err(err.into());
+        //         }
+        //     };
+        //     println!("Signature: {:?}", signature);
+        // }
         CommandsName::DepositSolGateway { amount, receiver } => {
             let ix = deposit_sol_gateway_instr(&client_config, amount, receiver.0)?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
@@ -258,6 +294,7 @@ fn main() -> Result<()> {
                 amount,
                 target_contract.0,
                 payload,
+                None,
             )?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
             let transaction = Transaction::new_signed_with_payer(
@@ -291,6 +328,7 @@ fn main() -> Result<()> {
                 amount,
                 target_contract.0,
                 payload,
+                None,
             )?;
             let recent_blockhash = rpc_client.get_latest_blockhash()?;
             let transaction = Transaction::new_signed_with_payer(
@@ -653,25 +691,29 @@ pub enum CommandsName {
     UpdateDodoRouteProxy {
         dodo_route_proxy: Pubkey,
     },
+    UpdateGasLimit {
+        new_gas_limit: u64,
+    },
     UpdateOwner {
         new_owner: Pubkey,
     },
-    DepositSolAndCall {
-        amount: u64,
-        receiver: EvmAddress,
-    },
-    DepositAndCall {
-        amount: u64,
-        target_contract: Pubkey,
-        payload: Vec<u8>,
-    },
-    DepositSwapAndCall {
-        amount: u64,
-        swap_data: Vec<u8>,
-        target_contract: Pubkey,
-        asset: Pubkey,
-        payload: Vec<u8>,
-    },
+    CloseConfig,
+    // DepositSolAndCall {
+    //     amount: u64,
+    //     receiver: EvmAddress,
+    // },
+    // DepositAndCall {
+    //     amount: u64,
+    //     target_contract: Pubkey,
+    //     payload: Vec<u8>,
+    // },
+    // DepositSwapAndCall {
+    //     amount: u64,
+    //     swap_data: Vec<u8>,
+    //     target_contract: Pubkey,
+    //     asset: Pubkey,
+    //     payload: Vec<u8>,
+    // },
     DepositSolGateway {
         amount: u64,
         receiver: EvmAddress,

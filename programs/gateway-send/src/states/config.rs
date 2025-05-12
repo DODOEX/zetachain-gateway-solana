@@ -9,6 +9,8 @@ pub struct Config {
     pub gateway: Pubkey,
     /// dodo route-proxy
     pub dodo_route_proxy: Pubkey,
+    /// gas_limit
+    pub gas_limit: u64,
     /// must be initialized before using
     pub is_initialized: bool,
     /// global nonce

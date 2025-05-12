@@ -7,7 +7,7 @@ use anchor_lang::prelude::*;
 
 declare_id!("CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK");
 
-pub const CONFIG_SEED: &[u8] = b"config";
+pub const CONFIG_SEED: &[u8] = CONNECTED_SEED;
 pub const AUTHORITY_SEED: &[u8] = b"authority";
 // zetachain use this
 pub const CONNECTED_SEED: &[u8] = b"connected";
@@ -36,46 +36,92 @@ pub mod gateway_send {
         instructions::update_dodo_route_proxy(ctx, dodo_route_proxy)
     }
 
+    pub fn update_gas_limit(ctx: Context<UpdateGasLimit>, new_gas_limit: u64) -> Result<()> {
+        instructions::update_gas_limit(ctx, new_gas_limit)
+    }
+
     pub fn update_owner(ctx: Context<UpdateOwner>, new_owner: Pubkey) -> Result<()> {
         instructions::update_owner(ctx, new_owner)
     }
 
+    pub fn close_config(ctx: Context<CloseConfig>) -> Result<()> {
+        instructions::close_config(ctx)
+    }
+
     pub fn deposit_sol_and_call(
         ctx: Context<DepositSolAndCall>,
-        amount: u64,
         target_contract: [u8; 20],
-        payload: Vec<u8>,
-    ) -> Result<()> {
-        instructions::deposit_sol_and_call(ctx, amount, target_contract, payload)
-    }
-
-    pub fn deposit_and_call(
-        ctx: Context<DepositAndCall>,
         amount: u64,
-        target_contract: Pubkey,
+        dst_chain_id: u32,
         payload: Vec<u8>,
     ) -> Result<()> {
-        instructions::deposit_and_call(ctx, amount, target_contract, payload)
+        instructions::deposit_sol_and_call(ctx, target_contract, amount, dst_chain_id, payload)
     }
 
-    pub fn deposit_swap_and_call(
-        ctx: Context<DepositSwapAndCall>,
+    pub fn deposit_spl_and_call(
+        ctx: Context<DepositSplAndCall>,
+        target_contract: [u8; 20],
+        amount: u64,
+        asset: Pubkey,
+        dst_chain_id: u32,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        instructions::deposit_spl_and_call(
+            ctx,
+            target_contract,
+            amount,
+            asset,
+            dst_chain_id,
+            payload,
+        )
+    }
+
+    pub fn deposit_spl_swap_spl_and_call(
+        ctx: Context<DepositSplSwapSplAndCall>,
+        target_contract: [u8; 20],
         amount: u64,
         swap_data: Vec<u8>,
-        target_contract: Pubkey,
         asset: Pubkey,
+        dst_chain_id: u32,
         payload: Vec<u8>,
     ) -> Result<()> {
-        instructions::deposit_swap_and_call(ctx, amount, swap_data, target_contract, asset, payload)
+        instructions::deposit_spl_swap_spl_and_call(
+            ctx,
+            target_contract,
+            amount,
+            swap_data,
+            asset,
+            dst_chain_id,
+            payload,
+        )
+    }
+
+    pub fn deposit_spl_swap_sol_and_call(
+        ctx: Context<DepositSplSwapSolAndCall>,
+        target_contract: [u8; 20],
+        amount: u64,
+        swap_data: Vec<u8>,
+        asset: Pubkey,
+        dst_chain_id: u32,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        instructions::deposit_spl_swap_sol_and_call(
+            ctx,
+            target_contract,
+            amount,
+            swap_data,
+            asset,
+            dst_chain_id,
+            payload,
+        )
     }
 
     pub fn on_call(
         ctx: Context<OnCall>,
-        external_id: [u8; 32],
-        evm_wallet_address: [u8; 20],
         amount: u64,
-        swap_data: Vec<u8>,
+        sender: [u8; 20],
+        data: Vec<u8>,
     ) -> Result<()> {
-        instructions::on_call(ctx, external_id, evm_wallet_address, amount, swap_data)
+        instructions::on_call(ctx, amount, sender, data)
     }
 }

@@ -1,9 +1,9 @@
 use crate::{
     states::{
-        config::{Config, ConnectedPda},
+        config::Config,
         events::{DodoRouteProxyUpdated, GatewayUpdated, OwnerUpdated},
     },
-    CONFIG_SEED, CONNECTED_SEED,
+    CONFIG_SEED,
 };
 use anchor_lang::prelude::*;
 #[derive(Accounts)]
@@ -19,15 +19,6 @@ pub struct CreateConfig<'info> {
         bump
     )]
     pub config: Account<'info, Config>,
-
-    #[account(
-        init_if_needed, 
-        payer = owner, 
-        space = ConnectedPda::LEN,
-        seeds = [CONNECTED_SEED], 
-        bump
-    )]
-    pub connected_pda: Account<'info, ConnectedPda>,
 
     pub system_program: Program<'info, System>,
 }
@@ -59,6 +50,19 @@ pub struct UpdateDodoRouteProxy<'info> {
 }
 
 #[derive(Accounts)]
+pub struct UpdateGasLimit<'info> {
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump,
+        has_one = owner
+    )]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
 pub struct UpdateOwner<'info> {
     pub owner: Signer<'info>,
 
@@ -67,6 +71,20 @@ pub struct UpdateOwner<'info> {
         seeds = [CONFIG_SEED],
         bump,
         has_one = owner
+    )]
+    pub config: Account<'info, Config>,
+}
+
+#[derive(Accounts)]
+pub struct CloseConfig<'info> {
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [CONFIG_SEED],
+        bump,
+        has_one = owner,
+        close = owner
     )]
     pub config: Account<'info, Config>,
 }
@@ -80,6 +98,7 @@ pub fn create_config(
     config.owner = ctx.accounts.owner.key();
     config.gateway = gateway;
     config.dodo_route_proxy = dodo_route_proxy;
+    config.gas_limit = 1000000;
     config.is_initialized = true;
     config.global_nonce = 0;
     Ok(())
@@ -110,11 +129,22 @@ pub fn update_dodo_route_proxy(
     Ok(())
 }
 
+pub fn update_gas_limit(ctx: Context<UpdateGasLimit>, new_gas_limit: u64) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    config.gas_limit = new_gas_limit;
+    Ok(())
+}
+
 pub fn update_owner(ctx: Context<UpdateOwner>, new_owner: Pubkey) -> Result<()> {
     let config = &mut ctx.accounts.config;
     config.owner = new_owner;
 
     emit!(OwnerUpdated { owner: new_owner });
 
+    Ok(())
+}
+
+pub fn close_config(_ctx: Context<CloseConfig>) -> Result<()> {
+    // 账户将被自动关闭，租金将返还给所有者
     Ok(())
 }
