@@ -6,7 +6,7 @@ use anchor_spl::associated_token::spl_associated_token_account;
 use anyhow::Result;
 use gateway_send::{
     gateway_send::{DepositAndCallArgs, DepositArgs, DepositSplAndCallArgs, RevertOptions},
-    AUTHORITY_SEED, CONFIG_SEED,
+    CONFIG_SEED,
 };
 
 use crate::{read_keypair_file, ClientConfig};
@@ -420,9 +420,15 @@ mod tests {
     use crate::EvmAddress;
 
     use super::*;
-    use anchor_client::solana_sdk::transaction::Transaction;
+    use anchor_client::{
+        solana_client::rpc_client::RpcClient, solana_sdk::transaction::Transaction, Client, Cluster,
+    };
+    use anchor_spl::token;
     use base64::Engine;
-    use std::str::FromStr;
+    use gateway_send::gateway_send::{
+        decode_bytes32, decode_bytes_with_length, decode_u16, decode_u256,
+    };
+    use std::{rc::Rc, str::FromStr};
 
     fn get_test_config() -> ClientConfig {
         ClientConfig {
@@ -458,7 +464,6 @@ mod tests {
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
         let mut payload = vec![];
-        payload.extend_from_slice(&external_id);
         payload.extend_from_slice(
             &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
                 .unwrap()
@@ -482,7 +487,7 @@ mod tests {
         let data = transaction.message.serialize();
         let data_base64 = base64::engine::general_purpose::STANDARD.encode(data);
 
-        let expected_data = "AQACBK5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziGKFMH/T9zbkZqtufwjQMxQR5YNuJkwFUQJzM35plu0IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhBy5DHwXY2oh7LR9Ulmj0f6s9aTLB7QPRVejXMW2vIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwMAAQLeAUEhusZy34U5QEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqGgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxdJjjKEhAnU2+AtpCT6D66aLP/EfklOvUUspr/vXv6HFSzf/YeF93NTOqAr3aN6UVfw3N2St9z66PrqnJU6FlUmkTHTvfP91AQGuXV09eQi5aHNhWEW1jFv4lDcahmpramrXhtbQTnas4gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAA==";
+        let expected_data = "AQACBK5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziGKFMH/T9zbkZqtufwjQMxQR5YNuJkwFUQJzM35plu0IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhBy5DHwXY2oh7LR9Ulmj0f6s9aTLB7QPRVejXMW2vIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAwMAAQK+AUEhusZy34U5QEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqEgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxUs3/2HhfdzUzqgK92jelFX8Nzdkrfc+uj66pyVOhZVJpEx073z/dQEBrl1dPXkIuWhzYVhFtYxb+JQ3GoZqa2pq14bW0E52rOIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAA=";
         assert_eq!(data_base64, expected_data);
     }
 
@@ -494,7 +499,6 @@ mod tests {
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
         let mut payload = vec![];
-        payload.extend_from_slice(&external_id);
         payload.extend_from_slice(
             &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
                 .unwrap()
@@ -515,6 +519,19 @@ mod tests {
             Some(external_id),
         )
         .unwrap();
+
+        // println!("instructions: {}", instructions[0].program_id);
+        // for account in instructions[0].accounts.iter() {
+        //     println!(
+        //         "instructions: {}, {}, {}",
+        //         account.pubkey, account.is_signer, account.is_writable
+        //     );
+        // }
+        // println!(
+        //     "instructions: {}",
+        //     hex::encode(instructions[0].data.clone())
+        // );
+
         let transaction = Transaction::new_with_payer(
             &instructions,
             Some(&Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap()),
@@ -523,7 +540,89 @@ mod tests {
         let data = transaction.message.serialize();
         let data_base64 = base64::engine::general_purpose::STANDARD.encode(data);
 
-        let expected_data = "AQACCa5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziBt324ddloZPZy+FGzut5rBy0he1fWzeROoz1hX7/AKkYoUwf9P3NuRmq25/CNAzFBHlg24mTAVRAnMzfmmW7QikD0EsV88ykamEEDF9rq2/uL/c1ouddWdWWQbb+YSVwfE7z+nD2XUzqKYBfjqZuZi9ms8E/8mF/HTezcQWscbq/VFTOKsKzyMfNo6Lcq7293LRH1THnBFjsipdRAXTRIukoOVUJZf/U1krKr0bUXfcxjltPV8kMSH1gYl2Cm4N7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIQcuQx8F2NqIey0fVJZo9H+rPWkywe0D0VXo1zFtryAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgIAAIDBgEEBQfeAQ61G7urPe2TQEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqGgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxdJjjKEhAnU2+AtpCT6D66aLP/EfklOvUUspr/vXv6HFSzf/YeF93NTOqAr3aN6UVfw3N2TRCTLrNhapN71KJlLIfp/rus5T5QGuXV09eQi5aHNhWEW1jFv4lDcahmpramrXhtbQTnas4gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAA==";
+        let expected_data = "AQACCa5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziBt324ddloZPZy+FGzut5rBy0he1fWzeROoz1hX7/AKkYoUwf9P3NuRmq25/CNAzFBHlg24mTAVRAnMzfmmW7QikD0EsV88ykamEEDF9rq2/uL/c1ouddWdWWQbb+YSVwfE7z+nD2XUzqKYBfjqZuZi9ms8E/8mF/HTezcQWscbq/VFTOKsKzyMfNo6Lcq7293LRH1THnBFjsipdRAXTRIukoOVUJZf/U1krKr0bUXfcxjltPV8kMSH1gYl2Cm4N7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIQcuQx8F2NqIey0fVJZo9H+rPWkywe0D0VXo1zFtryAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgIAAIDBgEEBQe+AQ61G7urPe2TQEIPAAAAAADIhJIEnJkMDvLrD3fRrvjWa/FrqEgAAADSY4yhIQJ1NvgLaQk+g+umiz/xH5JTr1FLKa/717+hxUs3/2HhfdzUzqgK92jelFX8Nzdk0Qky6zYWqTe9SiZSyH6f67rOU+UBrl1dPXkIuWhzYVhFtYxb+JQ3GoZqa2pq14bW0E52rOIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAA=";
         assert_eq!(data_base64, expected_data);
+    }
+
+    #[test]
+    fn test_on_call_data() {
+        let data = [
+            36, 225, 20, 26, 174, 247, 111, 178, 250, 84, 146, 59, 78, 63, 127, 74, 132, 0, 167,
+            121, 144, 107, 94, 102, 162, 125, 115, 188, 167, 148, 80, 44, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 135, 205, 160, 0, 44, 0,
+            0, 67, 106, 101, 87, 101, 103, 55, 80, 102, 121, 113, 53, 86, 99, 97, 107, 120, 97, 85,
+            119, 66, 72, 67, 90, 111, 69, 101, 80, 75, 89, 117, 90, 84, 89, 103, 102, 107, 88, 97,
+            97, 105, 67, 119, 51,
+        ];
+
+        let mut offset = 0;
+        let external_id = decode_bytes32(&data, &mut offset);
+        let output_amount = decode_u256(&data, &mut offset);
+        let receiver_len = decode_u16(&data, &mut offset);
+        let swap_data_len = decode_u16(&data, &mut offset);
+        let receiver = decode_bytes_with_length(&data, &mut offset, receiver_len as usize);
+        let receiver_str = String::from_utf8(receiver).unwrap();
+        let swap_data = decode_bytes_with_length(&data, &mut offset, swap_data_len as usize);
+
+        assert_eq!(
+            hex::encode(external_id),
+            "24e1141aaef76fb2fa54923b4e3f7f4a8400a779906b5e66a27d73bca794502c"
+        );
+        assert_eq!(output_amount, 8900000);
+        assert_eq!(receiver_str, "CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3");
+        assert_eq!(hex::encode(swap_data), "");
+    }
+
+    #[test]
+    fn test_simulate() {
+        let instruction = Instruction {
+            program_id: Pubkey::from_str("CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK").unwrap(),
+            accounts: vec![
+                AccountMeta::new(
+                    Pubkey::from_str("55GZAataCYtYidZDHmYigCKAxENi4YPfwT16wbT5iCgG").unwrap(),
+                    false,
+                ),
+                AccountMeta::new(
+                    Pubkey::from_str("2f9SLuUNb7TNeM6gzBwT4ZjbL5ZyKzzHg1Ce9yiquEjj").unwrap(),
+                    false,
+                ),
+                AccountMeta::new_readonly(token::ID, false),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(
+                    Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap(),
+                    true,
+                ),
+                // AccountMeta::new(
+                //     Pubkey::from_str("69f77rA4acX8U13rQyPkpCGD6QXMCRnpFzbChxKLtiqy").unwrap(),
+                //     false,
+                // ),
+                // AccountMeta::new(
+                //     Pubkey::from_str("9NFP6ezMNXAkvfGFojqgMiMoZiCCMYGEQAQsMfKLv7aq").unwrap(),
+                //     false,
+                // ),
+                // AccountMeta::new_readonly(
+                //     Pubkey::from_str("Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr").unwrap(),
+                //     false,
+                // ),
+            ],
+            data: {
+                hex::decode("10884220fe28b508a0cd870000000000351a86a2c8dc47d396305aacd7f126e096b2eee47000000086879cef4a0c4ee478b07ee1df616fd9b91342203d946c6b83f6e40c20a2d737000000000000000000000000000000000000000000000000000000000087cda0002c0000436a655765673750667971355663616b786155774248435a6f4565504b59755a545967666b58616169437733").unwrap()
+            },
+        };
+
+        let wallet = read_keypair_file("/Users/jwq/.config/solana/test_id.json").unwrap();
+        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+        let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let transaction = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap()),
+            &[&wallet],
+            recent_blockhash,
+        );
+        let simulation = rpc_client.simulate_transaction(&transaction).unwrap();
+        if simulation.value.err.is_some() {
+            println!("simulation: {:?}", simulation.value.logs);
+        }
+        assert!(simulation.value.err.is_none());
     }
 }

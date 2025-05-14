@@ -27,6 +27,7 @@ pub struct DepositSolAndCall<'info> {
      #[account(mut, seeds = [AUTHORITY_SEED], bump)]
     pub program_authority: SystemAccount<'info>,
 
+    /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
     pub gateway: AccountInfo<'info>,
 
@@ -135,6 +136,7 @@ pub struct DepositSplAndCall<'info> {
     #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", user_token_account.mint.as_ref()], bump)]
     pub program_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
     pub gateway: AccountInfo<'info>,
 
@@ -260,9 +262,11 @@ pub struct DepositSplSwapSplAndCall<'info> {
     #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", asset_mint.key().as_ref()], bump)]
     pub program_asset_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: dodo_route_proxy is validated by the config account, which ensures it matches the expected dodo route proxy program
     #[account(address = config.dodo_route_proxy)]
-    pub dodo_route_proxy: AccountInfo<'info>,
+    pub dodo_route_proxy: UncheckedAccount<'info>,
 
+    /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
     pub gateway: AccountInfo<'info>,
 
@@ -404,9 +408,11 @@ pub struct DepositSplSwapSolAndCall<'info> {
     // #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", asset_mint.key().as_ref()], bump)]
     // pub program_asset_token_account: Account<'info, TokenAccount>,
 
+    /// CHECK: dodo_route_proxy is validated by the config account, which ensures it matches the expected dodo route proxy program
     #[account(address = config.dodo_route_proxy)]
     pub dodo_route_proxy: AccountInfo<'info>,
 
+    /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
     pub gateway: AccountInfo<'info>,
 

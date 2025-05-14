@@ -423,7 +423,7 @@ fn main() -> Result<()> {
                 });
             }
 
-            let mint = Keypair::generate(&mut OsRng);
+            let mint = Keypair::new();
             println!("Mint: {}", mint.pubkey());
             let create_and_init_instr = create_and_init_mint_instr(
                 &client_config.clone(),
@@ -462,7 +462,7 @@ fn main() -> Result<()> {
                 payer.pubkey()
             };
             let mut signers = vec![&payer];
-            let auxiliary_token_keypair = Keypair::generate(&mut OsRng);
+            let auxiliary_token_keypair = Keypair::new();
             let create_ata_instr = if not_ata {
                 println!("{}", auxiliary_token_keypair.pubkey());
                 signers.push(&auxiliary_token_keypair);
@@ -475,10 +475,7 @@ fn main() -> Result<()> {
             } else {
                 println!(
                     "{}",
-                    spl_associated_token_account::get_associated_token_address(
-                        &payer.pubkey(),
-                        &mint
-                    )
+                    spl_associated_token_account::get_associated_token_address(&authority, &mint)
                 );
                 let mint_account = rpc_client.get_account(&mint)?;
                 create_ata_token_account_instr(

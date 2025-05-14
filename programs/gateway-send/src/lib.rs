@@ -116,8 +116,8 @@ pub mod gateway_send {
         )
     }
 
-    pub fn on_call(
-        ctx: Context<OnCall>,
+    pub fn on_call<'info>(
+        ctx: Context<'_, '_, '_, 'info, OnCall<'info>>,
         amount: u64,
         sender: [u8; 20],
         data: Vec<u8>,
