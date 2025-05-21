@@ -124,4 +124,13 @@ pub mod gateway_send {
     ) -> Result<()> {
         instructions::on_call(ctx, amount, sender, data)
     }
+
+    pub fn on_revert<'info>(
+        ctx: Context<'_, '_, '_, 'info, OnRevert<'info>>,
+        amount: u64,
+        sender: [u8; 20],
+        data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::on_revert(ctx, amount, sender, data)
+    }
 }

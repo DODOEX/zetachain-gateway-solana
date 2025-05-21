@@ -9,7 +9,7 @@ use {
     std::str::FromStr,
 };
 
-const SOL: Pubkey = pubkey!("So11111111111111111111111111111111111111111");
+pub const SOL: Pubkey = pubkey!("So11111111111111111111111111111111111111111");
 
 #[derive(Accounts)]
 pub struct OnCall<'info> {

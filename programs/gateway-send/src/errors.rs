@@ -12,6 +12,8 @@ pub enum GatewayError {
 
 #[error_code]
 pub enum OnRevertError {
+    #[msg("Insufficient balance")]
+    InsufficientBalance,
     #[msg("Invalid data format")]
     InvalidDataFormat,
     #[msg("Revert message")]
