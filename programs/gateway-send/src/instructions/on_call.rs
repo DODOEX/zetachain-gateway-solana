@@ -130,7 +130,6 @@ pub fn decode_bytes(data: &[u8], offset: &mut usize) -> Vec<u8> {
     bytes
 }
 
-// 添加新的解码函数
 pub fn decode_u16(data: &[u8], offset: &mut usize) -> u16 {
     let mut bytes = [0u8; 2];
     bytes.copy_from_slice(&data[*offset..*offset + 2]);

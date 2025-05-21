@@ -293,6 +293,7 @@ fn main() -> Result<()> {
                 &client_config,
                 amount,
                 target_contract.0,
+                receiver.0,
                 payload,
                 None,
             )?;

@@ -281,14 +281,17 @@ pub fn deposit_sol_gateway_instr(
     let payer = read_keypair_file(&config.payer_path)?;
     let program_id = config.gateway_program;
 
+    let mut abort_address = vec![0u8; 12];
+    abort_address[12..].copy_from_slice(&receiver);
+    let abort_address = Pubkey::new_from_array(abort_address.try_into().unwrap());
     let ix_data = DepositArgs {
         amount,
         receiver,
         revert_options: Some(RevertOptions {
-            revert_address: payer.pubkey(),
-            abort_address: Pubkey::default(),
+            revert_address: config.gateway_send_program,
+            abort_address,
             call_on_revert: true,
-            revert_message: Vec::new(),
+            revert_message: hex::decode("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764").unwrap(),
             on_revert_gas_limit: 0,
         }),
     };
@@ -315,6 +318,7 @@ pub fn deposit_sol_and_call_gateway_instr(
     config: &ClientConfig,
     amount: u64,
     target_contract: [u8; 20],
+    receiver: [u8; 20],
     payload: Vec<u8>,
     external_id: Option<[u8; 32]>,
 ) -> Result<Vec<Instruction>> {
@@ -326,16 +330,19 @@ pub fn deposit_sol_and_call_gateway_instr(
     let mut payload = payload;
     payload.splice(0..0, external_id.to_vec());
 
+    let mut abort_address = receiver.to_vec();
+    abort_address.extend_from_slice(&vec![0u8; 12]);
+    let abort_address = Pubkey::new_from_array(abort_address.try_into().unwrap());
     let ix_data = DepositAndCallArgs {
         amount,
         receiver: target_contract,
         message: payload,
         revert_options: Some(RevertOptions {
-            revert_address: payer.pubkey(),
-            abort_address: Pubkey::default(),
+            revert_address: config.gateway_send_program,
+            abort_address,
             call_on_revert: true,
-            revert_message: Vec::new(),
-            on_revert_gas_limit: 0,
+            revert_message: hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000043c86a896f9ea09859efb5693feb4e9252d436ceb03946619b2031c43933078d9000000000000000000000000000000000000000000000000000000000000000118a14c1ff4fdcdb919aadb9fc2340cc5047960db89930154409cccdf9a65bb42000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace20000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000").unwrap(),
+            on_revert_gas_limit: 10000000,
         }),
     };
 
@@ -418,17 +425,23 @@ pub fn deposit_spl_and_call_gateway_instr(
 #[cfg(test)]
 mod tests {
     use crate::EvmAddress;
+    use crate::Pubkey;
 
     use super::*;
     use anchor_client::{
-        solana_client::rpc_client::RpcClient, solana_sdk::transaction::Transaction, Client, Cluster,
+        anchor_lang::AnchorDeserialize,
+        solana_client::rpc_client::RpcClient,
+        solana_sdk::{message::Message, transaction::Transaction},
     };
     use anchor_spl::token;
     use base64::Engine;
-    use gateway_send::gateway_send::{
-        decode_bytes32, decode_bytes_with_length, decode_u16, decode_u256,
+    use gateway_send::instruction::OnRevert;
+    use gateway_send::{
+        gateway_send::{decode_bytes32, decode_bytes_with_length, decode_u16, decode_u256},
+        states::events::EddyCrossChainReceive,
     };
-    use std::{rc::Rc, str::FromStr};
+
+    use std::str::FromStr;
 
     fn get_test_config() -> ClientConfig {
         ClientConfig {
@@ -463,18 +476,18 @@ mod tests {
 
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
+        let receiver = EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
+            .unwrap()
+            .0;
         let mut payload = vec![];
-        payload.extend_from_slice(
-            &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
-                .unwrap()
-                .0,
-        );
+        payload.extend_from_slice(&receiver);
         payload.extend_from_slice(&config.sol_solana_zrc20.0);
 
         let instructions = deposit_sol_and_call_gateway_instr(
             &config,
             amount,
             target_contract,
+            receiver,
             payload.clone(),
             Some(external_id),
         )
@@ -574,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simulate() {
+    fn test_simulate_on_call() {
         let instruction = Instruction {
             program_id: Pubkey::from_str("CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK").unwrap(),
             accounts: vec![
@@ -624,5 +637,101 @@ mod tests {
             println!("simulation: {:?}", simulation.value.logs);
         }
         assert!(simulation.value.err.is_none());
+    }
+
+    #[test]
+    fn test_simulate_on_revert() {
+        let instruction = Instruction {
+            program_id: Pubkey::from_str("CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK").unwrap(),
+            accounts: vec![
+                AccountMeta::new(
+                    Pubkey::from_str("55GZAataCYtYidZDHmYigCKAxENi4YPfwT16wbT5iCgG").unwrap(),
+                    false,
+                ),
+                AccountMeta::new(
+                    Pubkey::from_str("2f9SLuUNb7TNeM6gzBwT4ZjbL5ZyKzzHg1Ce9yiquEjj").unwrap(),
+                    false,
+                ),
+                AccountMeta::new_readonly(system_program::id(), false),
+                AccountMeta::new(
+                    Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap(),
+                    true,
+                ),
+            ],
+            data: {
+                let mut data = vec![226, 44, 101, 52, 224, 214, 41, 9];
+                let ix_data = OnRevert {
+                    amount: 10000000,
+                    sender: [0u8; 20],
+                    data: hex::decode("68656c6c6f20776f726c64").unwrap(), // hello world
+                };
+                data.extend(ix_data.try_to_vec().unwrap());
+                data
+            },
+        };
+
+        let wallet = read_keypair_file("/Users/jwq/.config/solana/test_id.json").unwrap();
+        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+        let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let transaction = Transaction::new_signed_with_payer(
+            &[instruction],
+            Some(&Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap()),
+            &[&wallet],
+            recent_blockhash,
+        );
+        let simulation = rpc_client.simulate_transaction(&transaction).unwrap();
+        if simulation.value.err.is_some() {
+            println!("simulation: {:?}", simulation.value.logs);
+        }
+        assert!(simulation.value.err.is_none());
+    }
+
+    #[test]
+    fn test_simulate_from_base64() {
+        let base64_tx = "AQACBK5dXT15CLloc2FYRbWMW/iUNxqGamtqateG1tBOdqziGKFMH/T9zbkZqtufwjQMxQR5YNuJkwFUQJzM35plu0IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhBy5DHwXY2oh7LR9Ulmj0f6s9aTLB7QPRVejXMW2vIRZqHeyXdbjVaMtgPehB0OL2dOUHcEYiedzRMrmzlUUUBAwMAAQK+AUEhusZy34U5QEIPAAAAAAA1GoaiyNxH05YwWqzX8SbglrLu5EgAAAABI16FfjEPsWPf46jjHqXao/9yVWno3WWeQnALuJ7p40s3/2HhfdzUzqgK92jelFX8Nzdkrfc+uj66pyVOhZVJpEx073z/dQEBrl1dPXkIuWhzYVhFtYxb+JQ3GoZqa2pq14bW0E52rOIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAA=";
+        let tx_data = base64::engine::general_purpose::STANDARD
+            .decode(base64_tx)
+            .unwrap();
+
+        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+
+        let mut message: Message = bincode::deserialize(&tx_data).unwrap();
+        message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let transaction = Transaction::new_unsigned(message);
+
+        let simulation = rpc_client.simulate_transaction(&transaction).unwrap();
+
+        // 打印结果
+        if simulation.value.err.is_some() {
+            println!("Simulation error: {:?}", simulation.value.err);
+            println!("Simulation logs: {:?}", simulation.value.logs);
+        } else {
+            println!("Simulation successful");
+            println!("Simulation logs: {:?}", simulation.value.logs);
+        }
+
+        // 验证结果
+        assert!(simulation.value.err.is_none());
+    }
+
+    #[test]
+    fn test_event_decode() {
+        let event = "mMRaE/l8oiQl7BqWR/ck1Ido+cZ9J7ng4vtppQDfbZfUtdhAwmitvAabiFf+q4GE+2h/Y0YYwDXaxDncGus7VZig8AAAAAAABpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAADaLm6yAAAAANoubrIAAAAAH9keflJ63/Q6e9s9yQhGHLwcHLwfrL0L51pOTNuOUa4AAAAA";
+        let buf = base64::engine::general_purpose::STANDARD
+            .decode(event)
+            .unwrap();
+        let event = EddyCrossChainReceive::try_from_slice(&buf[8..]).unwrap();
+        assert_eq!(
+            "39KfGpqjWdnrGkTXahLoBMiMjHP5U3qpvjqA37359qWV",
+            event.wallet_address.to_string()
+        );
+    }
+
+    #[test]
+    fn test_sol() {
+        let sol = Pubkey::from_str("11111111111111111111111111111111").unwrap();
+        println!("sol: {}", sol);
+        println!("default: {}", Pubkey::default());
+        assert_eq!(sol, Pubkey::default());
     }
 }

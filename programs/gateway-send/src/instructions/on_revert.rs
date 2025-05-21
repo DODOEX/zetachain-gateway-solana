@@ -31,16 +31,16 @@ pub fn on_revert(
     _sender: [u8; 20],
     data: Vec<u8>,
 ) -> Result<()> {
-    msg!(
-        "on_revert {} {} {}",
-        amount,
-        hex::encode(_sender),
-        hex::encode(data)
-    );
-    msg!(
-        "remaining accounts length: {}",
-        ctx.remaining_accounts.len()
-    );
+    // msg!(
+    //     "on_revert {} {} {}",
+    //     amount,
+    //     hex::encode(_sender),
+    //     data.len()
+    // );
+    // msg!(
+    //     "remaining accounts length: {}",
+    //     ctx.remaining_accounts.len()
+    // );
     // let mut offset = 0;
     // let external_id = decode_bytes32(&data, &mut offset);
     // let data_sender = Pubkey::new_from_array(decode_bytes32(&data, &mut offset));
