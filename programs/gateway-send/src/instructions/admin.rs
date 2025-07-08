@@ -98,7 +98,7 @@ pub fn create_config(
     config.owner = ctx.accounts.owner.key();
     config.gateway = gateway;
     config.dodo_route_proxy = dodo_route_proxy;
-    config.gas_limit = 1000000;
+    config.gas_limit = 20000000;
     config.is_initialized = true;
     config.global_nonce = 0;
     Ok(())

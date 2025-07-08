@@ -13,9 +13,10 @@ gateway_send = "CbcR39gxjR2BH69ARzf5KF3tWSuNa9qpMaFSPecWgpNK"
 url = "https://api.apr.dev"
 
 [provider]
-#cluster = "Localnet"
-#wallet = "~/.config/solana/id.json"
-cluster = "https://api.devnet.solana.com"
+# cluster = "Localnet"
+# wallet = "~/.config/solana/id.json"
+# cluster = "https://api.devnet.solana.com"
+cluster = "https://api.mainnet-beta.solana.com"
 wallet = "~/.config/solana/test_id.json"
 
 [scripts]

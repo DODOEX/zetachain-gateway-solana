@@ -2,11 +2,16 @@ use anchor_client::{
     anchor_lang::{prelude::AccountMeta, AnchorSerialize, Discriminator},
     solana_sdk::{instruction::Instruction, pubkey::Pubkey, signer::Signer, system_program},
 };
-use anchor_spl::associated_token::spl_associated_token_account;
+use anchor_spl::{associated_token::spl_associated_token_account, token};
 use anyhow::Result;
 use gateway_send::{
     gateway_send::{DepositAndCallArgs, DepositArgs, DepositSplAndCallArgs, RevertOptions},
-    CONFIG_SEED,
+    instructions::{
+        on_revert::{decode_on_revert_call, encode_on_revert_call},
+        DEPOSIT_FEE,
+    },
+    utils::{decode_abi_accounts_and_data, encode_abi_accounts_and_data},
+    AUTHORITY_SEED, CONFIG_SEED,
 };
 
 use crate::{read_keypair_file, ClientConfig};
@@ -161,63 +166,127 @@ pub fn close_config_instr(config: &ClientConfig) -> Result<Vec<Instruction>> {
     Ok(vec![instruction])
 }
 
-// pub fn deposit_sol_and_call_instr(
+pub fn deposit_sol_and_call_instr(
+    config: &ClientConfig,
+    target_contract: [u8; 20],
+    amount: u64,
+    dst_chain_id: u32,
+    payload: Vec<u8>,
+) -> Result<Vec<Instruction>> {
+    let payer = read_keypair_file(&config.payer_path)?;
+    let program_id = config.gateway_send_program;
+
+    let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
+    let (program_authority, _) = Pubkey::find_program_address(&[AUTHORITY_SEED], &program_id);
+
+    let ix_data = gateway_send::instruction::DepositSolAndCall {
+        target_contract,
+        amount,
+        dst_chain_id,
+        payload,
+    };
+
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(config_pda, false),
+            AccountMeta::new(program_authority, false),
+            AccountMeta::new(config.gateway_program, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+            // remaining accounts, gateway deposit with call accounts
+            AccountMeta::new(program_authority, false),
+            AccountMeta::new(gateway_meta, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+        data: {
+            let mut data = gateway_send::instruction::DepositSolAndCall::DISCRIMINATOR.to_vec();
+            data.extend(ix_data.try_to_vec().unwrap());
+            data
+        },
+    };
+    Ok(vec![instruction])
+}
+
+pub fn deposit_spl_and_call_instr(
+    config: &ClientConfig,
+    target_contract: [u8; 20],
+    amount: u64,
+    asset: Pubkey,
+    dst_chain_id: u32,
+    payload: Vec<u8>,
+) -> Result<Vec<Instruction>> {
+    let payer = read_keypair_file(&config.payer_path)?;
+    let program_id = config.gateway_send_program;
+
+    let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
+    let (program_authority, _) = Pubkey::find_program_address(&[AUTHORITY_SEED], &program_id);
+
+    let ix_data = gateway_send::instruction::DepositSplAndCall {
+        target_contract,
+        amount,
+        asset,
+        dst_chain_id,
+        payload,
+    };
+
+    let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
+    let (whitelisted_entry, _) =
+        Pubkey::find_program_address(&[b"whitelist", asset.as_ref()], &config.gateway_program);
+    let user_account =
+        spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &asset);
+    let program_account =
+        spl_associated_token_account::get_associated_token_address(&program_authority, &asset);
+    let to_account =
+        spl_associated_token_account::get_associated_token_address(&gateway_meta, &asset);
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(config_pda, false),
+            AccountMeta::new(program_authority, false),
+            AccountMeta::new(asset, false),
+            AccountMeta::new(user_account, false),
+            AccountMeta::new(program_account, false),
+            AccountMeta::new(config.gateway_program, false),
+            AccountMeta::new(token::ID, false),
+            AccountMeta::new_readonly(system_program::id(), false),
+            // remaining accounts, gateway deposit with call accounts
+            AccountMeta::new(gateway_meta, false),
+            AccountMeta::new(whitelisted_entry, false),
+            AccountMeta::new(to_account, false),
+        ],
+        data: {
+            let mut data = gateway_send::instruction::DepositSplAndCall::DISCRIMINATOR.to_vec();
+            data.extend(ix_data.try_to_vec().unwrap());
+            data
+        },
+    };
+    println!("instruction: {:?}", instruction.accounts);
+    panic!();
+    Ok(vec![instruction])
+}
+
+// pub fn deposit_and_call_instr(
 //     config: &ClientConfig,
-//     target_contract: [u8; 20],
-//     amount: u64,
 //     dst_chain_id: u32,
+//     amount: u64,
+//     target_contract: [u8; 20],
+//     receiver: [u8; 20],
 //     payload: Vec<u8>,
+//     external_id: Option<[u8; 32]>,
 // ) -> Result<Vec<Instruction>> {
 //     let payer = read_keypair_file(&config.payer_path)?;
 //     let program_id = config.gateway_send_program;
 
 //     let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
-//     let (program_authority, _) = Pubkey::find_program_address(&[AUTHORITY_SEED], &program_id);
-
 //     let ix_data = gateway_send::instruction::DepositSolAndCall {
 //         target_contract,
 //         amount,
 //         dst_chain_id,
-//         payload,
-//     };
-
-//     let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
-
-//     let instruction = Instruction {
-//         program_id,
-//         accounts: vec![
-//             AccountMeta::new(payer.pubkey(), true),
-//             AccountMeta::new(config_pda, false),
-//             AccountMeta::new(program_authority, false),
-//             AccountMeta::new(config.gateway_program, false),
-//             AccountMeta::new_readonly(system_program::id(), false),
-//             // remaining accounts, gateway deposit with call accounts
-//             AccountMeta::new(program_authority, false),
-//             AccountMeta::new(gateway_meta, false),
-//             AccountMeta::new_readonly(system_program::id(), false),
-//         ],
-//         data: {
-//             let mut data = gateway_send::instruction::DepositSolAndCall::DISCRIMINATOR.to_vec();
-//             data.extend(ix_data.try_to_vec().unwrap());
-//             data
-//         },
-//     };
-//     Ok(vec![instruction])
-// }
-
-// pub fn deposit_and_call_instr(
-//     config: &ClientConfig,
-//     amount: u64,
-//     target_contract: Pubkey,
-//     payload: Vec<u8>,
-// ) -> Result<Vec<Instruction>> {
-//     let payer = read_keypair_file(&config.payer_path)?;
-//     let program_id = config.gateway_send_program;
-
-//     let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
-//     let ix_data = gateway_send::instruction::DepositAndCall {
-//         amount,
-//         target_contract,
 //         payload,
 //     };
 
@@ -281,15 +350,12 @@ pub fn deposit_sol_gateway_instr(
     let payer = read_keypair_file(&config.payer_path)?;
     let program_id = config.gateway_program;
 
-    let mut abort_address = vec![0u8; 12];
-    abort_address[12..].copy_from_slice(&receiver);
-    let abort_address = Pubkey::new_from_array(abort_address.try_into().unwrap());
     let ix_data = DepositArgs {
         amount,
         receiver,
         revert_options: Some(RevertOptions {
             revert_address: config.gateway_send_program,
-            abort_address,
+            abort_address: receiver,
             call_on_revert: true,
             revert_message: hex::decode("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764").unwrap(),
             on_revert_gas_limit: 0,
@@ -330,20 +396,18 @@ pub fn deposit_sol_and_call_gateway_instr(
     let mut payload = payload;
     payload.splice(0..0, external_id.to_vec());
 
-    let mut abort_address = receiver.to_vec();
-    abort_address.extend_from_slice(&vec![0u8; 12]);
-    let abort_address = Pubkey::new_from_array(abort_address.try_into().unwrap());
     let ix_data = DepositAndCallArgs {
         amount,
         receiver: target_contract,
         message: payload,
         revert_options: Some(RevertOptions {
             revert_address: config.gateway_send_program,
-            abort_address,
+            abort_address: receiver,
             call_on_revert: true,
-            revert_message: hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000043c86a896f9ea09859efb5693feb4e9252d436ceb03946619b2031c43933078d9000000000000000000000000000000000000000000000000000000000000000118a14c1ff4fdcdb919aadb9fc2340cc5047960db89930154409cccdf9a65bb42000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace20000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000").unwrap(),
+            revert_message: hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000043c86a896f9ea09859efb5693feb4e9252d436ceb03946619b2031c43933078d9000000000000000000000000000000000000000000000000000000000000000118a14c1ff4fdcdb919aadb9fc2340cc5047960db89930154409cccdf9a65bb42000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040d2638ca121027536f80b69093e83eba68b3ff11f9253af514b29affbd7bfa1c5ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace2").unwrap(),
             on_revert_gas_limit: 10000000,
         }),
+        deposit_fee: DEPOSIT_FEE,
     };
 
     let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
@@ -369,6 +433,7 @@ pub fn deposit_spl_and_call_gateway_instr(
     mint: Pubkey,
     amount: u64,
     target_contract: [u8; 20],
+    receiver: [u8; 20],
     payload: Vec<u8>,
     external_id: Option<[u8; 32]>,
 ) -> Result<Vec<Instruction>> {
@@ -385,12 +450,13 @@ pub fn deposit_spl_and_call_gateway_instr(
         receiver: target_contract,
         message: payload,
         revert_options: Some(RevertOptions {
-            revert_address: payer.pubkey(),
-            abort_address: Pubkey::default(),
+            revert_address: config.gateway_send_program,
+            abort_address: receiver,
             call_on_revert: true,
-            revert_message: Vec::new(),
-            on_revert_gas_limit: 0,
+            revert_message: hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000000073c86a896f9ea09859efb5693feb4e9252d436ceb03946619b2031c43933078d9000000000000000000000000000000000000000000000000000000000000000118a14c1ff4fdcdb919aadb9fc2340cc5047960db89930154409cccdf9a65bb42000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace200000000000000000000000000000000000000000000000000000000000000014c822ac7de8177a902894755a08b7aeb053b08b4f039bf5eca89548c1c2cd80400000000000000000000000000000000000000000000000000000000000000017c4ef3fa70f65d4cea29805f8ea66e662f66b3c13ff2617f1d37b37105ac71ba0000000000000000000000000000000000000000000000000000000000000001e92839550965ffd4d64acaaf46d45df7318e5b4f57c90c487d60625d829b837b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040d2638ca121027536f80b69093e83eba68b3ff11f9253af514b29affbd7bfa1c5ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace2").unwrap(),
+            on_revert_gas_limit: 10000000,
         }),
+        deposit_fee: DEPOSIT_FEE,
     };
 
     let (gateway_meta, _) = Pubkey::find_program_address(&[b"meta"], &config.gateway_program);
@@ -450,13 +516,15 @@ mod tests {
                 .unwrap(),
             gateway_program: Pubkey::from_str("ZETAjseVjuFsxdRxo6MmTCvqFwb3ZHUx56Co3vCmGis")
                 .unwrap(),
-            http_url: "https://api.devnet.solana.com".to_string(),
-            ws_url: "wss://api.devnet.solana.com/".to_string(),
+            http_url: "https://api.mainnet-beta.solana.com".to_string(),
+            ws_url: "wss://api.mainnet-beta.solana.com".to_string(),
             admin_path: "/Users/jwq/.config/solana/test_id.json".to_string(),
-            sol_solana_zrc20: EvmAddress::from_str("0xADF73ebA3Ebaa7254E859549A44c74eF7cff7501")
+            sol_solana_zrc20: EvmAddress::from_str("0x4bC32034caCcc9B7e02536945eDbC286bACbA073")
+                .unwrap(),
+            usdc_solana_zrc20: EvmAddress::from_str("0x8344d6f84d26f998fa070BbEA6D2E15E359e2641")
                 .unwrap(),
             gateway_transfer_native: EvmAddress::from_str(
-                "0xc88492049C990c0eF2eB0F77D1Aef8D66Bf16ba8",
+                "0x63eEc8527884582358Ce6e93d530Df725D5Cf7d1",
             )
             .unwrap(),
         }
@@ -511,12 +579,11 @@ mod tests {
 
         let amount = 1000000;
         let target_contract = config.gateway_transfer_native.0;
+        let receiver = EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
+            .unwrap()
+            .0;
         let mut payload = vec![];
-        payload.extend_from_slice(
-            &EvmAddress::from_str("0x4B37ff61e17DdcD4cEA80AF768de9455FC373764")
-                .unwrap()
-                .0,
-        );
+        payload.extend_from_slice(&receiver);
         payload.extend_from_slice(
             &EvmAddress::from_str("0xD10932EB3616a937bd4a2652c87E9FeBbAce53e5")
                 .unwrap()
@@ -528,6 +595,7 @@ mod tests {
             Pubkey::from_str("Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr").unwrap(),
             amount,
             target_contract,
+            receiver,
             payload.clone(),
             Some(external_id),
         )
@@ -624,7 +692,7 @@ mod tests {
         };
 
         let wallet = read_keypair_file("/Users/jwq/.config/solana/test_id.json").unwrap();
-        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+        let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
         let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
         let transaction = Transaction::new_signed_with_payer(
             &[instruction],
@@ -652,18 +720,32 @@ mod tests {
                     Pubkey::from_str("2f9SLuUNb7TNeM6gzBwT4ZjbL5ZyKzzHg1Ce9yiquEjj").unwrap(),
                     false,
                 ),
+                AccountMeta::new_readonly(token::ID, false),
                 AccountMeta::new_readonly(system_program::id(), false),
                 AccountMeta::new(
                     Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap(),
                     true,
                 ),
+                // AccountMeta::new(
+                //     Pubkey::from_str("69f77rA4acX8U13rQyPkpCGD6QXMCRnpFzbChxKLtiqy").unwrap(),
+                //     false,
+                // ),
+                // AccountMeta::new(
+                //     Pubkey::from_str("9NFP6ezMNXAkvfGFojqgMiMoZiCCMYGEQAQsMfKLv7aq").unwrap(),
+                //     false,
+                // ),
+                // AccountMeta::new_readonly(
+                //     Pubkey::from_str("Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr").unwrap(),
+                //     false,
+                // ),
             ],
             data: {
                 let mut data = vec![226, 44, 101, 52, 224, 214, 41, 9];
                 let ix_data = OnRevert {
-                    amount: 10000000,
-                    sender: [0u8; 20],
-                    data: hex::decode("68656c6c6f20776f726c64").unwrap(), // hello world
+                    amount: 1000000,
+                    sender: Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3")
+                        .unwrap(),
+                    data: hex::decode("d2638ca121027536f80b69093e83eba68b3ff11f9253af514b29affbd7bfa1c5ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace2").unwrap(),
                 };
                 data.extend(ix_data.try_to_vec().unwrap());
                 data
@@ -671,7 +753,7 @@ mod tests {
         };
 
         let wallet = read_keypair_file("/Users/jwq/.config/solana/test_id.json").unwrap();
-        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+        let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
         let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
         let transaction = Transaction::new_signed_with_payer(
             &[instruction],
@@ -693,7 +775,7 @@ mod tests {
             .decode(base64_tx)
             .unwrap();
 
-        let rpc_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+        let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
 
         let mut message: Message = bincode::deserialize(&tx_data).unwrap();
         message.recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
@@ -734,4 +816,243 @@ mod tests {
         println!("default: {}", Pubkey::default());
         assert_eq!(sol, Pubkey::default());
     }
+
+    #[test]
+    fn test_on_revert_data() {
+        let external_id = get_test_external_id();
+        let sender = Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap();
+        let mut data = external_id.to_vec();
+        data.extend(sender.to_bytes());
+        println!("data: {}", hex::encode(data));
+    }
+
+    #[test]
+    fn test_encode_on_revert_call() {
+        let config_pda = Pubkey::from_str("55GZAataCYtYidZDHmYigCKAxENi4YPfwT16wbT5iCgG").unwrap();
+        let gateway_pda = Pubkey::from_str("2f9SLuUNb7TNeM6gzBwT4ZjbL5ZyKzzHg1Ce9yiquEjj").unwrap();
+        let token_program = anchor_spl::token::ID;
+        let system_program = system_program::id();
+        let amount = 1000000;
+        let sender = Pubkey::from_str("CjeWeg7Pfyq5VcakxaUwBHCZoEePKYuZTYgfkXaaiCw3").unwrap();
+        let external_id = get_test_external_id();
+
+        // Test SOL transfer (1 remaining account)
+        let recipient = Pubkey::from_str("9NFP6ezMNXAkvfGFojqgMiMoZiCCMYGEQAQsMfKLv7aq").unwrap();
+        let remaining_accounts_sol = vec![recipient];
+
+        let encoded_sol = encode_on_revert_call(
+            &config_pda,
+            &gateway_pda,
+            &token_program,
+            &system_program,
+            amount,
+            &sender,
+            external_id,
+            &remaining_accounts_sol,
+        );
+
+        // Decode and verify
+        let (accounts, decoded_amount, decoded_sender, decoded_external_id) =
+            decode_on_revert_call(&encoded_sol).unwrap();
+
+        assert_eq!(decoded_amount, amount);
+        assert_eq!(decoded_sender, sender);
+        assert_eq!(decoded_external_id, external_id);
+        assert_eq!(accounts.len(), 5); // 4 base accounts + 1 recipient
+
+        // Verify the recipient account is writable
+        assert_eq!(accounts[4].0, recipient);
+        assert_eq!(accounts[4].1, true); // should be writable
+
+        println!("SOL transfer on_revert encoding test passed");
+
+        // Test token transfer (4 remaining accounts)
+        let from_account =
+            Pubkey::from_str("69f77rA4acX8U13rQyPkpCGD6QXMCRnpFzbChxKLtiqy").unwrap();
+        let to_account = Pubkey::from_str("9NFP6ezMNXAkvfGFojqgMiMoZiCCMYGEQAQsMfKLv7aq").unwrap();
+        let mint = Pubkey::from_str("Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr").unwrap();
+        let some_account = Pubkey::from_str("11111111111111111111111111111111").unwrap();
+
+        let remaining_accounts_token = vec![some_account, from_account, to_account, mint];
+
+        let encoded_token = encode_on_revert_call(
+            &config_pda,
+            &gateway_pda,
+            &token_program,
+            &system_program,
+            amount,
+            &sender,
+            external_id,
+            &remaining_accounts_token,
+        );
+
+        // Decode and verify token transfer
+        let (accounts_token, decoded_amount_token, decoded_sender_token, decoded_external_id_token) =
+            decode_on_revert_call(&encoded_token).unwrap();
+
+        assert_eq!(decoded_amount_token, amount);
+        assert_eq!(decoded_sender_token, sender);
+        assert_eq!(decoded_external_id_token, external_id);
+        assert_eq!(accounts_token.len(), 8); // 4 base accounts + 4 token accounts
+
+        // Verify token accounts have correct writable flags
+        assert_eq!(accounts_token[4].0, some_account);
+        assert_eq!(accounts_token[4].1, false); // not writable
+        assert_eq!(accounts_token[5].0, from_account);
+        assert_eq!(accounts_token[5].1, true); // writable
+        assert_eq!(accounts_token[6].0, to_account);
+        assert_eq!(accounts_token[6].1, true); // writable
+        assert_eq!(accounts_token[7].0, mint);
+        assert_eq!(accounts_token[7].1, false); // not writable
+
+        println!("Token transfer on_revert encoding test passed");
+    }
+
+    #[test]
+    fn test_encode_native_message() {
+        // Test data with real addresses
+        let target_zrc20: [u8; 20] = hex::decode("4bC32034caCcc9B7e02536945eDbC286bACbA073")
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let sender = hex::decode("4B37ff61e17DdcD4cEA80AF768de9455FC373764").unwrap();
+        let receiver = hex::decode("D10932EB3616a937bd4a2652c87E9FeBbAce53e5").unwrap();
+        let swap_data = hex::decode("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000043c86a896f9ea09859efb5693feb4e9252d436ceb03946619b2031c43933078d9000000000000000000000000000000000000000000000000000000000000000118a14c1ff4fdcdb919aadb9fc2340cc5047960db89930154409cccdf9a65bb42000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000040d2638ca121027536f80b69093e83eba68b3ff11f9253af514b29affbd7bfa1c5ae5d5d3d7908b96873615845b58c5bf894371a866a6b6a6ad786d6d04e76ace2")
+            .unwrap();
+
+        // Encode
+        let encoded = encode_native_message(&target_zrc20, &sender, &receiver, &swap_data);
+
+        // Verify structure: 20 + 2 + 2 + 20 + 20 + 352 = 416 bytes
+        assert_eq!(
+            encoded.len(),
+            20 + 2 + 2 + sender.len() + receiver.len() + swap_data.len()
+        );
+
+        // Decode and verify
+        let (decoded_target, decoded_sender, decoded_receiver, decoded_swap_data) =
+            decode_native_message(&encoded).unwrap();
+
+        assert_eq!(decoded_target, target_zrc20);
+        assert_eq!(decoded_sender, sender);
+        assert_eq!(decoded_receiver, receiver);
+        assert_eq!(decoded_swap_data, swap_data);
+
+        println!("Native message encoding test passed");
+        println!("Target ZRC20: 0x{}", hex::encode(target_zrc20));
+        println!("Sender: 0x{}", hex::encode(&sender));
+        println!("Receiver: 0x{}", hex::encode(&receiver));
+        println!("Swap data length: {} bytes", swap_data.len());
+        println!("Encoded total length: {} bytes", encoded.len());
+
+        // Test with empty data
+        let empty_sender = b"".to_vec();
+        let empty_receiver = b"".to_vec();
+        let empty_swap_data = b"".to_vec();
+
+        let encoded_empty = encode_native_message(
+            &target_zrc20,
+            &empty_sender,
+            &empty_receiver,
+            &empty_swap_data,
+        );
+        let (
+            decoded_target_empty,
+            decoded_sender_empty,
+            decoded_receiver_empty,
+            decoded_swap_data_empty,
+        ) = decode_native_message(&encoded_empty).unwrap();
+
+        assert_eq!(decoded_target_empty, target_zrc20);
+        assert_eq!(decoded_sender_empty, empty_sender);
+        assert_eq!(decoded_receiver_empty, empty_receiver);
+        assert_eq!(decoded_swap_data_empty, empty_swap_data);
+
+        println!("Native message encoding with empty data test passed");
+    }
+
+    #[test]
+    fn test_decode_native_message_edge_cases() {
+        // Test with insufficient data
+        let insufficient_data = vec![0u8; 23]; // Less than minimum 24 bytes
+        let result = decode_native_message(&insufficient_data);
+        assert!(result.is_err());
+
+        // Test with valid minimum data
+        let mut valid_data = vec![0u8; 24];
+        valid_data[20] = 0; // sender length = 0
+        valid_data[21] = 0;
+        valid_data[22] = 0; // receiver length = 0
+        valid_data[23] = 0;
+
+        let result = decode_native_message(&valid_data);
+        assert!(result.is_ok());
+
+        let (target, sender, receiver, swap_data) = result.unwrap();
+        assert_eq!(target, [0u8; 20]);
+        assert_eq!(sender, Vec::<u8>::new());
+        assert_eq!(receiver, Vec::<u8>::new());
+        assert_eq!(swap_data, Vec::<u8>::new());
+
+        println!("Native message decode edge cases test passed");
+    }
+}
+
+/// Encode native message similar to Solidity's encodeNativeMessage function
+/// This function encodes: bytes20(targetZRC20) + uint16(sender.length) + uint16(receiver.length) + sender + receiver + swapData
+pub fn encode_native_message(
+    target_zrc20: &[u8; 20],
+    sender: &[u8],
+    receiver: &[u8],
+    swap_data: &[u8],
+) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    // Add targetZRC20 (20 bytes)
+    encoded.extend_from_slice(target_zrc20);
+    // Add sender length (2 bytes, big-endian)
+    let sender_len = sender.len() as u16;
+    encoded.extend_from_slice(&sender_len.to_be_bytes());
+    // Add receiver length (2 bytes, big-endian)
+    let receiver_len = receiver.len() as u16;
+    encoded.extend_from_slice(&receiver_len.to_be_bytes());
+    // Add sender data
+    encoded.extend_from_slice(sender);
+    // Add receiver data
+    encoded.extend_from_slice(receiver);
+    // Add swap data
+    encoded.extend_from_slice(swap_data);
+    encoded
+}
+
+/// Decode native message
+pub fn decode_native_message(
+    encoded_data: &[u8],
+) -> anyhow::Result<([u8; 20], Vec<u8>, Vec<u8>, Vec<u8>)> {
+    if encoded_data.len() < 24 {
+        anyhow::bail!("Invalid encoded_data length");
+    }
+    let mut offset = 0;
+    // Decode targetZRC20 (20 bytes)
+    let target_zrc20: [u8; 20] = encoded_data[offset..offset + 20].try_into().unwrap();
+    offset += 20;
+    // Decode sender length (2 bytes, big-endian)
+    let sender_len = u16::from_be_bytes([encoded_data[offset], encoded_data[offset + 1]]) as usize;
+    offset += 2;
+    // Decode receiver length (2 bytes, big-endian)
+    let receiver_len =
+        u16::from_be_bytes([encoded_data[offset], encoded_data[offset + 1]]) as usize;
+    offset += 2;
+    // Check if we have enough data
+    if offset + sender_len + receiver_len > encoded_data.len() {
+        anyhow::bail!("Invalid encoded_data length");
+    }
+    // Decode sender data
+    let sender = encoded_data[offset..offset + sender_len].to_vec();
+    offset += sender_len;
+    // Decode receiver data
+    let receiver = encoded_data[offset..offset + receiver_len].to_vec();
+    offset += receiver_len;
+    // Decode swap data (remaining bytes)
+    let swap_data = encoded_data[offset..].to_vec();
+    Ok((target_zrc20, sender, receiver, swap_data))
 }

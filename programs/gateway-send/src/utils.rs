@@ -107,3 +107,101 @@ pub fn prepare_account_metas_only_route_proxy(
     }
     Ok(account_metas)
 }
+
+/// Encode accounts and data using ABI encoding similar to ethers
+/// This function encodes the structure: tuple(tuple(bytes32 publicKey, bool isWritable)[] accounts, bytes data)
+pub fn encode_abi_accounts_and_data(accounts: &[(Pubkey, bool)], data: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+
+    // Encode the outer tuple structure
+    // First encode the accounts array
+    let accounts_count = accounts.len() as u32;
+
+    // Encode array length (32 bytes)
+    let mut count_bytes = [0u8; 32];
+    count_bytes[28..32].copy_from_slice(&accounts_count.to_be_bytes());
+    encoded.extend_from_slice(&count_bytes);
+
+    // Encode each account tuple (bytes32 publicKey, bool isWritable)
+    for (pubkey, is_writable) in accounts {
+        // Encode publicKey (bytes32) - pad to 32 bytes
+        let mut pubkey_bytes = [0u8; 32];
+        pubkey_bytes.copy_from_slice(&pubkey.to_bytes());
+        encoded.extend_from_slice(&pubkey_bytes);
+
+        // Encode isWritable (bool) - pad to 32 bytes
+        let mut bool_bytes = [0u8; 32];
+        bool_bytes[31] = if *is_writable { 1 } else { 0 };
+        encoded.extend_from_slice(&bool_bytes);
+    }
+
+    // Encode the data bytes
+    let data_length = data.len() as u32;
+
+    // Encode data length (32 bytes)
+    let mut data_len_bytes = [0u8; 32];
+    data_len_bytes[28..32].copy_from_slice(&data_length.to_be_bytes());
+    encoded.extend_from_slice(&data_len_bytes);
+
+    // Encode data with padding to 32-byte boundary
+    let padding_needed = (32 - (data.len() % 32)) % 32;
+    encoded.extend_from_slice(data);
+    encoded.extend_from_slice(&vec![0u8; padding_needed]);
+
+    encoded
+}
+
+/// Decode ABI encoded accounts and data
+pub fn decode_abi_accounts_and_data(encoded_data: &[u8]) -> Result<(Vec<(Pubkey, bool)>, Vec<u8>)> {
+    if encoded_data.len() < 32 {
+        return Err(GatewayError::InvalidInstructionData.into());
+    }
+
+    let mut offset = 0;
+
+    // Decode accounts array length
+    let mut count_bytes = [0u8; 4];
+    count_bytes.copy_from_slice(&encoded_data[offset + 28..offset + 32]);
+    let accounts_count = u32::from_be_bytes(count_bytes) as usize;
+    offset += 32;
+
+    // Decode accounts
+    let mut accounts = Vec::new();
+    for _ in 0..accounts_count {
+        if offset + 64 > encoded_data.len() {
+            return Err(GatewayError::InvalidInstructionData.into());
+        }
+
+        // Decode publicKey
+        let pubkey_bytes = &encoded_data[offset..offset + 32];
+        let pubkey = Pubkey::new_from_array(
+            pubkey_bytes
+                .try_into()
+                .map_err(|_| GatewayError::InvalidInstructionData)?,
+        );
+        offset += 32;
+
+        // Decode isWritable
+        let is_writable = encoded_data[offset + 31] != 0;
+        offset += 32;
+
+        accounts.push((pubkey, is_writable));
+    }
+
+    // Decode data length
+    if offset + 32 > encoded_data.len() {
+        return Err(GatewayError::InvalidInstructionData.into());
+    }
+    let mut data_len_bytes = [0u8; 4];
+    data_len_bytes.copy_from_slice(&encoded_data[offset + 28..offset + 32]);
+    let data_length = u32::from_be_bytes(data_len_bytes) as usize;
+    offset += 32;
+
+    // Decode data
+    if offset + data_length > encoded_data.len() {
+        return Err(GatewayError::InvalidInstructionData.into());
+    }
+    let data = encoded_data[offset..offset + data_length].to_vec();
+
+    Ok((accounts, data))
+}

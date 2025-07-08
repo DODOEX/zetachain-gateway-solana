@@ -1,6 +1,6 @@
 use {
     crate::{
-        errors::OnCallError,
+        errors::GatewayError,
         states::{config::Config, events::EddyCrossChainReceive},
         CONFIG_SEED,
     },
@@ -47,18 +47,18 @@ pub fn on_call<'info>(
     let receiver_len = decode_u16(&data, &mut offset);
     let swap_data_len = decode_u16(&data, &mut offset);
     let receiver_bytes = decode_bytes_with_length(&data, &mut offset, receiver_len as usize);
-    let receiver_str = String::from_utf8(receiver_bytes).map_err(|_| OnCallError::InvalidUtf8)?;
-    let receiver = Pubkey::from_str(&receiver_str).map_err(|_| OnCallError::InvalidPubkey)?;
+    let receiver_str = String::from_utf8(receiver_bytes).map_err(|_| GatewayError::InvalidUtf8)?;
+    let receiver = Pubkey::from_str(&receiver_str).map_err(|_| GatewayError::InvalidPubkey)?;
     let swap_data = decode_bytes_with_length(&data, &mut offset, swap_data_len as usize);
 
     // check receiver account
     if ctx.remaining_accounts[0].key() != receiver {
-        return Err(OnCallError::InvalidReceiverAccount.into());
+        return Err(GatewayError::InvalidReceiverAccount.into());
     }
     let token = if ctx.remaining_accounts.len() == 1 {
         // check balance
         if ctx.accounts.config.to_account_info().lamports() < amount {
-            return Err(OnCallError::InsufficientBalance.into());
+            return Err(GatewayError::InsufficientBalance.into());
         }
         // transfer sol
         ctx.accounts.config.sub_lamports(amount).unwrap();
@@ -77,7 +77,7 @@ pub fn on_call<'info>(
         token::transfer(cpi_ctx, amount)?;
         ctx.remaining_accounts[3].key()
     } else {
-        return Err(OnCallError::InvalidRemainingAccounts.into());
+        return Err(GatewayError::InvalidRemainingAccounts.into());
     };
 
     msg!(

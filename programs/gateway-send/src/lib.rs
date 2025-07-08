@@ -1,7 +1,7 @@
 mod errors;
-mod instructions;
+pub mod instructions;
 pub mod states;
-mod utils;
+pub mod utils;
 
 use anchor_lang::prelude::*;
 
@@ -58,8 +58,8 @@ pub mod gateway_send {
         instructions::deposit_sol_and_call(ctx, target_contract, amount, dst_chain_id, payload)
     }
 
-    pub fn deposit_spl_and_call(
-        ctx: Context<DepositSplAndCall>,
+    pub fn deposit_spl_and_call<'info>(
+        ctx: Context<'_, '_, '_, 'info, DepositSplAndCall<'info>>,
         target_contract: [u8; 20],
         amount: u64,
         asset: Pubkey,
@@ -128,7 +128,7 @@ pub mod gateway_send {
     pub fn on_revert<'info>(
         ctx: Context<'_, '_, '_, 'info, OnRevert<'info>>,
         amount: u64,
-        sender: [u8; 20],
+        sender: Pubkey,
         data: Vec<u8>,
     ) -> Result<()> {
         instructions::on_revert(ctx, amount, sender, data)

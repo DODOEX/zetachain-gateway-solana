@@ -1,7 +1,7 @@
 mod admin;
 mod deposit_and_call;
 mod on_call;
-mod on_revert;
+pub mod on_revert;
 
 pub use admin::*;
 pub use deposit_and_call::*;

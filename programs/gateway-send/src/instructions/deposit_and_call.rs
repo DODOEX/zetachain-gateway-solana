@@ -1,6 +1,6 @@
 use {
     crate::{
-        errors::GatewayError, states::{config::Config, events::EddyCrossChainSend}, utils::{prepare_account_metas, prepare_account_metas_only_gateway}, AUTHORITY_SEED, CONFIG_SEED
+        errors::GatewayError, instructions::encode_on_revert_call, states::{config::Config, events::EddyCrossChainSend}, utils::{prepare_account_metas, prepare_account_metas_only_gateway}, AUTHORITY_SEED, CONFIG_SEED
     },
     anchor_lang::{
         prelude::*,
@@ -44,6 +44,7 @@ pub fn deposit_sol_and_call(
     let config = &mut ctx.accounts.config;
     config.global_nonce += 1;
     let user = &ctx.accounts.user;
+    let receiver = payload[payload.len()-20..].to_vec();
 
     // Calculate external_id
     let external_id = calc_external_id(ctx.program_id, &user.key(), config.global_nonce)?;
@@ -67,6 +68,20 @@ pub fn deposit_sol_and_call(
     // Prepare account metas
     let account_metas = prepare_account_metas_only_gateway(ctx.remaining_accounts, user)?;
 
+    // Abort message is the external id and receiver
+    let mut revert_message = external_id.to_vec();
+    revert_message.extend_from_slice(&receiver);
+    // let revert_message = encode_on_revert_call(
+    //     &ctx.accounts.config.key(),
+    //     &ctx.accounts.gateway.key(),
+    //     &Token::id(),
+    //     &ctx.accounts.system_program.key(),
+    //     amount,
+    //     &user.key(),
+    //     external_id,
+    //     &account_metas.iter().map(|meta| meta.pubkey).collect::<Vec<_>>(),
+    // );
+
     // Prepare data
     let mut data = [65, 33, 186, 198, 114, 223, 133, 57].to_vec(); // deposit_and_call
     let args = DepositAndCallArgs {
@@ -75,11 +90,12 @@ pub fn deposit_sol_and_call(
         message: payload.clone(),
         revert_options: Some(RevertOptions {
             revert_address: *ctx.program_id,
-            abort_address: Pubkey::default(),
+            abort_address: target_contract,
             call_on_revert: true,
-            revert_message: Vec::new(),
-            on_revert_gas_limit: 0,
+            revert_message,
+            on_revert_gas_limit: ctx.accounts.config.gas_limit,
         }),
+        deposit_fee: DEPOSIT_FEE,
     };
     data.extend(args.try_to_vec()?);
 
@@ -95,6 +111,17 @@ pub fn deposit_sol_and_call(
         ctx.remaining_accounts,
         &[&[AUTHORITY_SEED, &[ctx.bumps.program_authority]]],
     )?;
+
+    msg!("EddyCrossChainSend 0x{} {} {} {} {} {} {} 0x{}", 
+        hex::encode(external_id),
+        dst_chain_id,
+        SOL_MINT,
+        SOL_MINT,
+        amount,
+        amount,
+        user.key(),
+        hex::encode(&payload),
+    );
 
     // Emit event
     emit!(EddyCrossChainSend {
@@ -127,25 +154,36 @@ pub struct DepositSplAndCall<'info> {
     pub program_authority: SystemAccount<'info>,
 
     #[account(
+        constraint = asset_mint.key() == user_token_account.mint,
+    )]
+    pub asset_mint: Box<Account<'info, Mint>>,
+
+    #[account(
         mut,     
         token::authority = user,
         token::token_program = token_program,
     )]
-    pub user_token_account: Account<'info, TokenAccount>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
 
-    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", user_token_account.mint.as_ref()], bump)]
-    pub program_token_account: Account<'info, TokenAccount>,
+    #[account(
+        init_if_needed, 
+        payer = user, 
+        token::mint = asset_mint,
+        token::authority = program_authority,
+        token::token_program = token_program,
+    )]
+    pub program_token_account: Box<Account<'info, TokenAccount>>,
 
     /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
-    pub gateway: AccountInfo<'info>,
+    pub gateway: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
-pub fn deposit_spl_and_call(
-    ctx: Context<DepositSplAndCall>,
+pub fn deposit_spl_and_call<'info>(
+    ctx: Context<'_, '_, '_, 'info, DepositSplAndCall<'info>>,
     target_contract: [u8; 20],
     amount: u64,
     asset: Pubkey,
@@ -155,6 +193,7 @@ pub fn deposit_spl_and_call(
     let config = &mut ctx.accounts.config;
     config.global_nonce += 1;
     let user = &ctx.accounts.user;
+    let receiver = payload[payload.len()-20..].to_vec();
 
     // Calculate external_id
     let external_id = calc_external_id(ctx.program_id, &user.key(), config.global_nonce)?;
@@ -184,22 +223,36 @@ pub fn deposit_spl_and_call(
     let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
     token::transfer(cpi_ctx, amount)?;
 
-    // Prepare account metas
-    let account_metas = prepare_account_metas_only_gateway(ctx.remaining_accounts, user)?;
+    // Prepare account metas for gateway call
+    // remaining_accounts should contain: [gateway_meta, whitelisted_entry, to_account]
+    let account_metas = vec![
+        AccountMeta::new(ctx.accounts.program_authority.key(), false),
+        AccountMeta::new(ctx.remaining_accounts[0].key(), false), // gateway_meta
+        AccountMeta::new(ctx.remaining_accounts[1].key(), false), // whitelisted_entry
+        AccountMeta::new_readonly(ctx.accounts.asset_mint.key(), false), // asset_mint - use asset parameter
+        AccountMeta::new_readonly(ctx.accounts.token_program.key(), false), // token_program - use ctx.accounts
+        AccountMeta::new(ctx.accounts.program_token_account.key(), false), // program_token_account - use ctx.accounts
+        AccountMeta::new(ctx.remaining_accounts[2].key(), false), // to_account
+        AccountMeta::new_readonly(ctx.accounts.system_program.key(), false), // system_program - use ctx.accounts
+    ];
+
+    let mut revert_message = external_id.to_vec();
+    revert_message.extend_from_slice(&receiver);
 
     // Prepare data
-    let mut data = [65, 33, 186, 198, 114, 223, 133, 57].to_vec(); // deposit_spl_token_and_call
+    let mut data = [14, 181, 27, 187, 171, 61, 237, 147].to_vec(); // deposit_spl_token_and_call
     let args = DepositAndCallArgs {
         amount,
         receiver: target_contract,
         message: payload.clone(),
         revert_options: Some(RevertOptions {
             revert_address: *ctx.program_id,
-            abort_address: Pubkey::default(),
+            abort_address: target_contract,
             call_on_revert: true,
-            revert_message: Vec::new(),
-            on_revert_gas_limit: 0,
+            revert_message,
+            on_revert_gas_limit: ctx.accounts.config.gas_limit,
         }),
+        deposit_fee: DEPOSIT_FEE,
     };
     data.extend(args.try_to_vec()?);
 
@@ -215,6 +268,17 @@ pub fn deposit_spl_and_call(
         ctx.remaining_accounts,
         &[&[AUTHORITY_SEED, &[ctx.bumps.program_authority]]],
     )?;
+
+    msg!("EddyCrossChainSend 0x{} {} {} {} {} {} {} 0x{}", 
+        hex::encode(external_id),
+        dst_chain_id,
+        asset,
+        asset,
+        amount,
+        amount,
+        user.key(),
+        hex::encode(&payload),
+    );
 
     // Emit event
     emit!(EddyCrossChainSend {
@@ -253,13 +317,13 @@ pub struct DepositSplSwapSplAndCall<'info> {
     )]
     pub user_from_token_account: Account<'info, TokenAccount>,
 
-    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", user_from_token_account.mint.as_ref()], bump)]
+    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [AUTHORITY_SEED, user_from_token_account.mint.as_ref()], bump)]
     pub program_from_token_account: Account<'info, TokenAccount>,
 
     #[account(mint::token_program = token_program)]
     pub asset_mint: Account<'info, Mint>,
 
-    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", asset_mint.key().as_ref()], bump)]
+    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [AUTHORITY_SEED, asset_mint.key().as_ref()], bump)]
     pub program_asset_token_account: Account<'info, TokenAccount>,
 
     /// CHECK: dodo_route_proxy is validated by the config account, which ensures it matches the expected dodo route proxy program
@@ -274,6 +338,7 @@ pub struct DepositSplSwapSplAndCall<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// sol will be wrapped to spl token first, then swap to another spl token
 pub fn deposit_spl_swap_spl_and_call(
     ctx: Context<DepositSplSwapSplAndCall>,
     target_contract: [u8; 20],
@@ -345,11 +410,12 @@ pub fn deposit_spl_swap_spl_and_call(
             message: payload.clone(),
             revert_options: Some(RevertOptions {
                 revert_address: *ctx.program_id,
-                abort_address: Pubkey::default(),
+                abort_address: target_contract,
                 call_on_revert: true,
                 revert_message: Vec::new(),
                 on_revert_gas_limit: 0,
             }),
+            deposit_fee: DEPOSIT_FEE,
         };
         data.extend(args.try_to_vec()?);
 
@@ -399,13 +465,13 @@ pub struct DepositSplSwapSolAndCall<'info> {
     #[account(mut)]
     pub user_from_token_account: Account<'info, TokenAccount>,
 
-    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", user_from_token_account.mint.as_ref()], bump)]
+    #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [AUTHORITY_SEED, user_from_token_account.mint.as_ref()], bump)]
     pub program_from_token_account: Account<'info, TokenAccount>,
 
     // #[account(mint::token_program = token_program)]
     // pub asset_mint: Account<'info, Mint>,
 
-    // #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [b"program_token", asset_mint.key().as_ref()], bump)]
+    // #[account(init_if_needed, payer = user, space = TokenAccount::LEN, seeds = [AUTHORITY_SEED, asset_mint.key().as_ref()], bump)]
     // pub program_asset_token_account: Account<'info, TokenAccount>,
 
     /// CHECK: dodo_route_proxy is validated by the config account, which ensures it matches the expected dodo route proxy program
@@ -490,11 +556,12 @@ pub fn deposit_spl_swap_sol_and_call(
         message: payload.clone(),
         revert_options: Some(RevertOptions {
             revert_address: *ctx.program_id,
-            abort_address: Pubkey::default(),
+            abort_address: target_contract,
             call_on_revert: true,
             revert_message: Vec::new(),
             on_revert_gas_limit: 0,
         }),
+        deposit_fee: DEPOSIT_FEE,
     };
     data.extend(args.try_to_vec()?);
 
@@ -557,6 +624,7 @@ pub struct DepositAndCallArgs {
     pub receiver: [u8; 20],
     pub message: Vec<u8>,
     pub revert_options: Option<RevertOptions>,
+    pub deposit_fee: u64,
 }
 
 pub type DepositSplAndCallArgs = DepositAndCallArgs;
@@ -564,7 +632,7 @@ pub type DepositSplAndCallArgs = DepositAndCallArgs;
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct RevertOptions {
     pub revert_address: Pubkey,
-    pub abort_address: Pubkey,
+    pub abort_address: [u8; 20],
     pub call_on_revert: bool,
     pub revert_message: Vec<u8>,
     pub on_revert_gas_limit: u64,

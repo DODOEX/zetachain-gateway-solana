@@ -1,16 +1,29 @@
 mod instructions;
 
 use crate::instructions::gateway_send_instructions::{
-    create_config_instr, update_dodo_route_proxy_instr, update_gateway_instr, update_owner_instr,
+    create_config_instr, deposit_sol_and_call_instr, deposit_spl_and_call_instr,
+    encode_native_message, update_dodo_route_proxy_instr, update_gateway_instr, update_owner_instr,
 };
 use gateway_send::{states::config::Config, CONFIG_SEED};
+use solana_program::{
+    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
+    instruction::Instruction,
+    message::v0::{self},
+};
 
 use std::{rc::Rc, str::FromStr};
 
 use anchor_client::{
     anchor_lang::{prelude::Pubkey, AccountDeserialize},
     solana_client::rpc_client::RpcClient,
-    solana_sdk::{self, signature::Keypair, signer::Signer, transaction::Transaction},
+    solana_sdk::{
+        self,
+        compute_budget::ComputeBudgetInstruction,
+        message::VersionedMessage,
+        signature::Keypair,
+        signer::Signer,
+        transaction::{Transaction, VersionedTransaction},
+    },
     Client, Cluster,
 };
 use anchor_spl::{
@@ -34,7 +47,6 @@ use instructions::{
         create_ata_token_account_instr, spl_token_mint_to_instr,
     },
 };
-use rand::rngs::OsRng;
 use spl_token_client::{spl_token_2022::state::AccountState, token::ExtensionInitializationParams};
 
 #[derive(Clone, Debug)]
@@ -46,6 +58,7 @@ pub struct ClientConfig {
     gateway_send_program: Pubkey,
     gateway_program: Pubkey,
     sol_solana_zrc20: EvmAddress,
+    usdc_solana_zrc20: EvmAddress,
     gateway_transfer_native: EvmAddress,
 }
 
@@ -188,30 +201,92 @@ fn main() -> Result<()> {
             println!("Signature: {:?}", signature);
         }
 
-        // CommandsName::DepositSolAndCall { amount, receiver } => {
-        //     let target_contract = &client_config.gateway_transfer_native;
-        //     let zrc20 = &client_config.sol_solana_zrc20;
-        //     let mut payload = Vec::new();
-        //     payload.extend_from_slice(&receiver.0);
-        //     payload.extend_from_slice(&zrc20.0);
-        //     let ix =
-        //         deposit_sol_and_call_instr(&client_config, amount, target_contract.0, payload)?;
-        //     let recent_blockhash = rpc_client.get_latest_blockhash()?;
-        //     let transaction = Transaction::new_signed_with_payer(
-        //         &ix,
-        //         Some(&payer.pubkey()),
-        //         &[&payer],
-        //         recent_blockhash,
-        //     );
-        //     let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
-        //         Ok(sig) => sig,
-        //         Err(err) => {
-        //             println!("Error: {:?}", err);
-        //             return Err(err.into());
-        //         }
-        //     };
-        //     println!("Signature: {:?}", signature);
-        // }
+        CommandsName::DepositSolAndCall {
+            dst_chain_id,
+            amount,
+            receiver,
+        } => {
+            let target_contract = &client_config.gateway_transfer_native;
+            let zrc20 = &client_config.sol_solana_zrc20;
+
+            let payload = encode_native_message(
+                &zrc20.0,
+                payer.pubkey().to_string().as_bytes(), // 不是pubkey的直接bytes
+                &receiver.0,
+                &[],
+            );
+
+            let mut ix = deposit_sol_and_call_instr(
+                &client_config,
+                target_contract.0,
+                amount,
+                dst_chain_id,
+                payload,
+            )?;
+            let compute_unit_ix = ComputeBudgetInstruction::set_compute_unit_limit(400_000);
+            // let priority_ix = ComputeBudgetInstruction::set_compute_unit_price(1);
+            ix.insert(0, compute_unit_ix);
+
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
+        CommandsName::DepositSplAndCall {
+            dst_chain_id,
+            mint,
+            amount,
+            receiver,
+        } => {
+            let target_contract = &client_config.gateway_transfer_native;
+            let zrc20 = &client_config.usdc_solana_zrc20;
+
+            let payload = encode_native_message(
+                &zrc20.0,
+                payer.pubkey().to_string().as_bytes(), // 不是pubkey的直接bytes
+                &receiver.0,
+                &[],
+            );
+
+            let mut ix = deposit_spl_and_call_instr(
+                &client_config,
+                target_contract.0,
+                amount,
+                mint,
+                dst_chain_id,
+                payload,
+            )?;
+            let compute_unit_ix = ComputeBudgetInstruction::set_compute_unit_limit(400_000);
+            // let priority_ix = ComputeBudgetInstruction::set_compute_unit_price(1);
+            ix.insert(0, compute_unit_ix);
+
+            let recent_blockhash = rpc_client.get_latest_blockhash()?;
+            let transaction = Transaction::new_signed_with_payer(
+                &ix,
+                Some(&payer.pubkey()),
+                &[&payer],
+                recent_blockhash,
+            );
+            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+                Ok(sig) => sig,
+                Err(err) => {
+                    println!("Error: {:?}", err);
+                    return Err(err.into());
+                }
+            };
+            println!("Signature: {:?}", signature);
+        }
         // CommandsName::DepositAndCall {
         //     amount,
         //     target_contract,
@@ -323,22 +398,25 @@ fn main() -> Result<()> {
             let mut payload = Vec::new();
             payload.extend_from_slice(&receiver.0);
             payload.extend_from_slice(&zrc20.0);
-            let ix = deposit_spl_and_call_gateway_instr(
+            let mut ix = deposit_spl_and_call_gateway_instr(
                 &client_config,
                 mint,
                 amount,
                 target_contract.0,
+                receiver.0,
                 payload,
                 None,
             )?;
-            let recent_blockhash = rpc_client.get_latest_blockhash()?;
-            let transaction = Transaction::new_signed_with_payer(
-                &ix,
-                Some(&payer.pubkey()),
-                &[&payer],
-                recent_blockhash,
-            );
-            let signature = match rpc_client.send_and_confirm_transaction(&transaction) {
+            let compute_unit_ix = ComputeBudgetInstruction::set_compute_unit_limit(400_000);
+            // let priority_ix = ComputeBudgetInstruction::set_compute_unit_price(1);
+            ix.insert(0, compute_unit_ix);
+            // ix.insert(1, priority_ix);
+
+            let lookup_table =
+                Pubkey::from_str("Bm7FoYBLzSTeWR7PyNcUzVUi78mBgJkA5BSmFVJ9fZ1B").unwrap();
+            let versioned_tx =
+                create_tx_with_address_table_lookup(&rpc_client, &ix, lookup_table, &payer)?;
+            let signature = match rpc_client.send_and_confirm_transaction(&versioned_tx) {
                 Ok(sig) => sig,
                 Err(err) => {
                     println!("Error: {:?}", err);
@@ -611,8 +689,7 @@ fn main() -> Result<()> {
             for (i, addr) in lookup_table_data.addresses.iter().enumerate() {
                 println!("  {}: {}", i, addr);
             }
-        }
-        _ => todo!(),
+        } // _ => todo!(),
     }
 
     Ok(())
@@ -652,6 +729,11 @@ fn load_cfg(client_config: &String) -> Result<ClientConfig> {
         panic!("sol_solana_zrc20 must not be empty");
     }
     let sol_solana_zrc20 = EvmAddress::from_str(&sol_solana_zrc20_str).unwrap();
+    let usdc_solana_zrc20_str = config.get("Global", "usdc_solana_zrc20").unwrap();
+    if usdc_solana_zrc20_str.is_empty() {
+        panic!("usdc_solana_zrc20 must not be empty");
+    }
+    let usdc_solana_zrc20 = EvmAddress::from_str(&usdc_solana_zrc20_str).unwrap();
     let gateway_transfer_native_str = config.get("Global", "gateway_transfer_native").unwrap();
     if gateway_transfer_native_str.is_empty() {
         panic!("gateway_transfer_native must not be empty");
@@ -666,6 +748,7 @@ fn load_cfg(client_config: &String) -> Result<ClientConfig> {
         gateway_send_program,
         gateway_program,
         sol_solana_zrc20,
+        usdc_solana_zrc20,
         gateway_transfer_native,
     })
 }
@@ -696,10 +779,17 @@ pub enum CommandsName {
         new_owner: Pubkey,
     },
     CloseConfig,
-    // DepositSolAndCall {
-    //     amount: u64,
-    //     receiver: EvmAddress,
-    // },
+    DepositSolAndCall {
+        dst_chain_id: u32,
+        amount: u64,
+        receiver: EvmAddress,
+    },
+    DepositSplAndCall {
+        dst_chain_id: u32,
+        mint: Pubkey,
+        amount: u64,
+        receiver: EvmAddress,
+    },
     // DepositAndCall {
     //     amount: u64,
     //     target_contract: Pubkey,
@@ -798,4 +888,31 @@ impl From<EvmAddress> for [u8; 20] {
     fn from(addr: EvmAddress) -> [u8; 20] {
         addr.0
     }
+}
+
+fn create_tx_with_address_table_lookup(
+    client: &RpcClient,
+    instructions: &[Instruction],
+    address_lookup_table_key: Pubkey,
+    payer: &Keypair,
+) -> Result<VersionedTransaction> {
+    let raw_account = client.get_account(&address_lookup_table_key)?;
+    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data)?;
+    let address_lookup_table_account = AddressLookupTableAccount {
+        key: address_lookup_table_key,
+        addresses: address_lookup_table.addresses.to_vec(),
+    };
+
+    let blockhash = client.get_latest_blockhash()?;
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(v0::Message::try_compile(
+            &payer.pubkey(),
+            instructions,
+            &[address_lookup_table_account],
+            blockhash,
+        )?),
+        &[payer],
+    )?;
+
+    Ok(tx)
 }
