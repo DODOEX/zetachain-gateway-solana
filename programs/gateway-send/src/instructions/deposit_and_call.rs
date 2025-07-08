@@ -1,12 +1,12 @@
 use {
     crate::{
-        errors::GatewayError, instructions::encode_on_revert_call, states::{config::Config, events::EddyCrossChainSend}, utils::{prepare_account_metas, prepare_account_metas_only_gateway}, AUTHORITY_SEED, CONFIG_SEED
+        errors::GatewayError, states::{config::Config, events::EddyCrossChainSend}, utils::{prepare_account_metas, prepare_account_metas_only_gateway}, AUTHORITY_SEED, CONFIG_SEED
     },
     anchor_lang::{
         prelude::*,
         solana_program::{instruction::Instruction, program::invoke_signed},
     },
-    anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer},
+    anchor_spl::{associated_token::AssociatedToken, token::{self, Mint, Token, TokenAccount, Transfer}},
 };
 
 /// Deposit fee used when depositing SOL or SPL tokens.
@@ -166,19 +166,20 @@ pub struct DepositSplAndCall<'info> {
     pub user_token_account: Box<Account<'info, TokenAccount>>,
 
     #[account(
-        init_if_needed, 
-        payer = user, 
-        token::mint = asset_mint,
-        token::authority = program_authority,
-        token::token_program = token_program,
+        init_if_needed,
+        payer = user,
+        associated_token::mint = asset_mint,
+        associated_token::authority = program_authority,
+        associated_token::token_program = token_program,
     )]
-    pub program_token_account: Box<Account<'info, TokenAccount>>,
+    pub program_token_account: Account<'info, TokenAccount>,
 
     /// CHECK: gateway is validated by the config account, which ensures it matches the expected gateway program
     #[account(address = config.gateway)]
     pub gateway: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -226,7 +227,7 @@ pub fn deposit_spl_and_call<'info>(
     // Prepare account metas for gateway call
     // remaining_accounts should contain: [gateway_meta, whitelisted_entry, to_account]
     let account_metas = vec![
-        AccountMeta::new(ctx.accounts.program_authority.key(), false),
+        AccountMeta::new(ctx.accounts.program_authority.key(), true),
         AccountMeta::new(ctx.remaining_accounts[0].key(), false), // gateway_meta
         AccountMeta::new(ctx.remaining_accounts[1].key(), false), // whitelisted_entry
         AccountMeta::new_readonly(ctx.accounts.asset_mint.key(), false), // asset_mint - use asset parameter
@@ -263,9 +264,21 @@ pub fn deposit_spl_and_call<'info>(
         data,
     };
 
+    // Prepare all accounts for gateway call in the same order as account_metas
+    let all_accounts = vec![
+        ctx.accounts.program_authority.to_account_info(), // program_authority
+        ctx.remaining_accounts[0].clone(), // gateway_meta
+        ctx.remaining_accounts[1].clone(), // whitelisted_entry
+        ctx.accounts.asset_mint.to_account_info(), // asset_mint
+        ctx.accounts.token_program.to_account_info(), // token_program
+        ctx.accounts.program_token_account.to_account_info(), // program_token_account
+        ctx.remaining_accounts[2].clone(), // to_account
+        ctx.accounts.system_program.to_account_info(), // system_program
+    ];
+    
     invoke_signed(
         &gateway_ix,
-        ctx.remaining_accounts,
+        &all_accounts,
         &[&[AUTHORITY_SEED, &[ctx.bumps.program_authority]]],
     )?;
 

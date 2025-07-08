@@ -2,15 +2,14 @@ use anchor_client::{
     anchor_lang::{prelude::AccountMeta, AnchorSerialize, Discriminator},
     solana_sdk::{instruction::Instruction, pubkey::Pubkey, signer::Signer, system_program},
 };
-use anchor_spl::{associated_token::spl_associated_token_account, token};
+use anchor_spl::{
+    associated_token::{self, spl_associated_token_account},
+    token,
+};
 use anyhow::Result;
 use gateway_send::{
     gateway_send::{DepositAndCallArgs, DepositArgs, DepositSplAndCallArgs, RevertOptions},
-    instructions::{
-        on_revert::{decode_on_revert_call, encode_on_revert_call},
-        DEPOSIT_FEE,
-    },
-    utils::{decode_abi_accounts_and_data, encode_abi_accounts_and_data},
+    instructions::DEPOSIT_FEE,
     AUTHORITY_SEED, CONFIG_SEED,
 };
 
@@ -253,6 +252,7 @@ pub fn deposit_spl_and_call_instr(
             AccountMeta::new(program_account, false),
             AccountMeta::new(config.gateway_program, false),
             AccountMeta::new(token::ID, false),
+            AccountMeta::new(associated_token::ID, false),
             AccountMeta::new_readonly(system_program::id(), false),
             // remaining accounts, gateway deposit with call accounts
             AccountMeta::new(gateway_meta, false),
@@ -265,8 +265,6 @@ pub fn deposit_spl_and_call_instr(
             data
         },
     };
-    println!("instruction: {:?}", instruction.accounts);
-    panic!();
     Ok(vec![instruction])
 }
 
