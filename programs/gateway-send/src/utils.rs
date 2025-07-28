@@ -4,22 +4,30 @@ use anchor_lang::solana_program::instruction::AccountMeta;
 use crate::errors::GatewayError;
 
 /// Prepares account metas for withdraw and call, revert if unallowed account is passed
+///
+/// Accounts order in remaining_accounts:
+/// 1. Gateway accounts (gateway_meta, whitelisted_entry, etc.)
+/// 2. Route proxy program address (marks the split point)
+/// 3. Route proxy result account (immediately after route proxy address)
+/// 4. Route proxy accounts (swap accounts, token accounts, etc.)
+///
+/// Returns: (gateway_account_metas, route_proxy_account_metas)
+/// - gateway_account_metas: includes result account at the end
+/// - route_proxy_account_metas: excludes result account
 #[allow(clippy::collapsible_else_if)]
 pub fn prepare_account_metas(
     remaining_accounts: &[AccountInfo],
     signer: &Signer,
-    gateway: &Pubkey,
+    route_proxy: &Pubkey,
 ) -> Result<(Vec<AccountMeta>, Vec<AccountMeta>)> {
-    require!(
-        remaining_accounts.len() > 0,
-        GatewayError::InvalidInstructionData
-    );
-    let mut route_proxy_account_metas = Vec::new();
     let mut gateway_account_metas = Vec::new();
+    let mut route_proxy_account_metas = Vec::new();
 
-    let mut now_route_proxy = true;
-    // Skip first account as it is the route proxy result account
-    for account_info in remaining_accounts[1..].iter() {
+    let mut now_gateway = true;
+    let mut found_result_account = false;
+
+    // Process all accounts
+    for account_info in remaining_accounts.iter() {
         let account_key = account_info.key;
 
         // Prevent signer from being included
@@ -28,24 +36,37 @@ pub fn prepare_account_metas(
             GatewayError::InvalidInstructionData
         );
 
-        // Gateway key is split between route proxy and gateway
-        if account_key == gateway {
-            now_route_proxy = false;
-        } else if account_info.is_writable {
-            if now_route_proxy {
-                route_proxy_account_metas.push(AccountMeta::new(*account_key, false));
-            } else {
+        // Route proxy key is split between gateway and route proxy
+        if account_key == route_proxy {
+            now_gateway = false;
+            // The next account after route_proxy is the result account
+            found_result_account = true;
+        } else if found_result_account {
+            // This is the result account, add it to gateway accounts
+            if account_info.is_writable {
                 gateway_account_metas.push(AccountMeta::new(*account_key, false));
-            }
-        } else {
-            if now_route_proxy {
-                route_proxy_account_metas.push(AccountMeta::new_readonly(*account_key, false));
             } else {
                 gateway_account_metas.push(AccountMeta::new_readonly(*account_key, false));
             }
+            found_result_account = false;
+        } else if account_info.is_writable {
+            if now_gateway {
+                gateway_account_metas.push(AccountMeta::new(*account_key, false));
+            } else {
+                route_proxy_account_metas.push(AccountMeta::new(*account_key, false));
+            }
+        } else {
+            if now_gateway {
+                gateway_account_metas.push(AccountMeta::new_readonly(*account_key, false));
+            } else {
+                route_proxy_account_metas.push(AccountMeta::new_readonly(*account_key, false));
+            }
         }
     }
-    Ok((route_proxy_account_metas, gateway_account_metas))
+    if route_proxy_account_metas.is_empty() || gateway_account_metas.is_empty() {
+        return Err(GatewayError::InvalidInstructionData.into());
+    }
+    Ok((gateway_account_metas, route_proxy_account_metas))
 }
 
 pub fn prepare_account_metas_only_gateway(

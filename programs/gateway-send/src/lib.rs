@@ -76,8 +76,8 @@ pub mod gateway_send {
         )
     }
 
-    pub fn deposit_spl_swap_spl_and_call(
-        ctx: Context<DepositSplSwapSplAndCall>,
+    pub fn deposit_spl_swap_spl_and_call<'info>(
+        ctx: Context<'_, '_, '_, 'info, DepositSplSwapSplAndCall<'info>>,
         target_contract: [u8; 20],
         amount: u64,
         swap_data: Vec<u8>,
@@ -96,8 +96,8 @@ pub mod gateway_send {
         )
     }
 
-    pub fn deposit_spl_swap_sol_and_call(
-        ctx: Context<DepositSplSwapSolAndCall>,
+    pub fn deposit_spl_swap_sol_and_call<'info>(
+        ctx: Context<'_, '_, '_, 'info, DepositSplSwapSolAndCall<'info>>,
         target_contract: [u8; 20],
         amount: u64,
         swap_data: Vec<u8>,

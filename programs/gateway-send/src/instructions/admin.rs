@@ -3,7 +3,7 @@ use crate::{
         config::Config,
         events::{DodoRouteProxyUpdated, GatewayUpdated, OwnerUpdated},
     },
-    CONFIG_SEED,
+    AUTHORITY_SEED, CONFIG_SEED,
 };
 use anchor_lang::prelude::*;
 #[derive(Accounts)]
@@ -101,6 +101,8 @@ pub fn create_config(
     config.gas_limit = 20000000;
     config.is_initialized = true;
     config.global_nonce = 0;
+    let (_, authority_bump) = Pubkey::find_program_address(&[AUTHORITY_SEED], ctx.program_id);
+    config.authority_bump = authority_bump;
     Ok(())
 }
 

@@ -15,6 +15,10 @@ pub struct Config {
     pub is_initialized: bool,
     /// global nonce
     pub global_nonce: u64,
+    /// bump
+    pub bump: u8,
+    /// authority bump
+    pub authority_bump: u8,
     /// padding
     pub padding: [u64; 64],
 }
