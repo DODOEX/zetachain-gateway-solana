@@ -2,7 +2,7 @@ use {
     crate::{
         errors::GatewayError,
         states::{config::Config, events::EddyCrossChainReceive},
-        AUTHORITY_SEED, CONFIG_SEED,
+        CONFIG_SEED,
     },
     anchor_lang::prelude::*,
     anchor_spl::{
@@ -33,14 +33,13 @@ pub struct OnCall<'info> {
 /*
 remaining_accounts: [
     user_wallet,
-    program_authority,
     program_token_account,
     user_token_account,
     token_mint,
 ]
  */
 pub fn on_call<'info>(
-    ctx: Context<'_, '_, '_, 'info, OnCall<'info>>,
+    ctx: Context<'_, '_, 'info, 'info, OnCall<'info>>,
     amount: u64,
     _sender: [u8; 20],
     data: Vec<u8>,
@@ -68,13 +67,19 @@ pub fn on_call<'info>(
         ctx.accounts.config.sub_lamports(amount).unwrap();
         ctx.remaining_accounts[0].add_lamports(amount).unwrap();
         SOL
-    } else if ctx.remaining_accounts.len() == 5 {
+    } else if ctx.remaining_accounts.len() == 4 {
+        // Check SPL token balance
+        let from_token_account =
+            Account::<token::TokenAccount>::try_from(&ctx.remaining_accounts[1])?;
+        if from_token_account.amount < amount {
+            return Err(GatewayError::InsufficientBalance.into());
+        }
         // Check if the 'to' account exists, if not, create it
-        let to_account_info = ctx.remaining_accounts[3].to_account_info();
+        let to_account_info = ctx.remaining_accounts[2].to_account_info();
         if to_account_info.owner != &token::ID || to_account_info.data_is_empty() {
             // Create associated token account
             let payer = ctx.accounts.config.to_account_info();
-            let mint = ctx.remaining_accounts[4].to_account_info();
+            let mint = ctx.remaining_accounts[3].to_account_info();
             let authority = ctx.remaining_accounts[0].to_account_info();
             let ata_ctx = CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -91,16 +96,15 @@ pub fn on_call<'info>(
         }
         // transfer token
         let cpi_accounts = token::Transfer {
-            from: ctx.remaining_accounts[2].to_account_info(),
+            from: ctx.remaining_accounts[1].to_account_info(),
             to: to_account_info,
-            authority: ctx.remaining_accounts[1].to_account_info(),
+            authority: ctx.accounts.config.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let authority_signer: &[&[&[u8]]] =
-            &[&[AUTHORITY_SEED, &[ctx.accounts.config.authority_bump]]];
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, authority_signer);
+        let config_signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[ctx.bumps.config]]];
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, config_signer);
         token::transfer(cpi_ctx, amount)?;
-        ctx.remaining_accounts[4].key()
+        ctx.remaining_accounts[3].key()
     } else {
         return Err(GatewayError::InvalidRemainingAccounts.into());
     };
