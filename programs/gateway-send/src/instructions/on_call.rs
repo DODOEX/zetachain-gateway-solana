@@ -2,20 +2,24 @@ use {
     crate::{
         errors::GatewayError,
         states::{config::Config, events::EddyCrossChainReceive},
-        CONFIG_SEED,
+        AUTHORITY_SEED, CONFIG_SEED,
     },
     anchor_lang::prelude::*,
     anchor_spl::{
-        associated_token::{self},
+        associated_token::{self, AssociatedToken},
         token::{self, Token},
     },
     std::str::FromStr,
 };
 
 pub const SOL: Pubkey = pubkey!("So11111111111111111111111111111111111111111");
+pub const USDC_MINT: Pubkey = pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+pub const USDT_MINT: Pubkey = pubkey!("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
+pub const CB_BTC_MINT: Pubkey = pubkey!("cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij");
 
 #[derive(Accounts)]
 pub struct OnCall<'info> {
+    /// use sub lamports don't need mut
     #[account(
         seeds = [CONFIG_SEED],
         bump,
@@ -27,6 +31,8 @@ pub struct OnCall<'info> {
 
     pub token_program: Program<'info, Token>,
 
+    pub associated_token_program: Program<'info, AssociatedToken>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -36,6 +42,7 @@ remaining_accounts: [
     program_token_account,
     user_token_account,
     token_mint,
+    program_authority,
 ]
  */
 pub fn on_call<'info>(
@@ -58,6 +65,7 @@ pub fn on_call<'info>(
     if ctx.remaining_accounts[0].key() != receiver {
         return Err(GatewayError::InvalidReceiverAccount.into());
     }
+    let mut output_amount = amount;
     let token = if ctx.remaining_accounts.len() == 1 {
         // check balance
         if ctx.accounts.config.to_account_info().lamports() < amount {
@@ -67,22 +75,29 @@ pub fn on_call<'info>(
         ctx.accounts.config.sub_lamports(amount).unwrap();
         ctx.remaining_accounts[0].add_lamports(amount).unwrap();
         SOL
-    } else if ctx.remaining_accounts.len() == 4 {
+    } else if ctx.remaining_accounts.len() == 5 {
         // Check SPL token balance
         let from_token_account =
             Account::<token::TokenAccount>::try_from(&ctx.remaining_accounts[1])?;
         if from_token_account.amount < amount {
             return Err(GatewayError::InsufficientBalance.into());
         }
-        // Check if the 'to' account exists, if not, create it
+        // Get or create the 'to' account
+        let mint = ctx.remaining_accounts[3].to_account_info();
+        let authority = ctx.remaining_accounts[0].to_account_info();
         let to_account_info = ctx.remaining_accounts[2].to_account_info();
-        if to_account_info.owner != &token::ID || to_account_info.data_is_empty() {
+
+        // Check if the account exists and is valid
+        if to_account_info.owner != &token::ID
+            || to_account_info.data_is_empty()
+            || to_account_info.lamports() == 0
+        {
             // Create associated token account
-            let payer = ctx.accounts.config.to_account_info();
-            let mint = ctx.remaining_accounts[3].to_account_info();
-            let authority = ctx.remaining_accounts[0].to_account_info();
-            let ata_ctx = CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
+            let payer = ctx.remaining_accounts[4].to_account_info();
+            let payer_signer: &[&[&[u8]]] =
+                &[&[AUTHORITY_SEED, &[ctx.accounts.config.authority_bump]]];
+            let ata_ctx = CpiContext::new_with_signer(
+                ctx.accounts.associated_token_program.to_account_info(),
                 associated_token::Create {
                     payer,
                     associated_token: to_account_info.clone(),
@@ -91,8 +106,23 @@ pub fn on_call<'info>(
                     system_program: ctx.accounts.system_program.to_account_info(),
                     token_program: ctx.accounts.token_program.to_account_info(),
                 },
+                payer_signer,
             );
             associated_token::create(ata_ctx)?;
+            // 0.002 sol, 300usd/sol, usdc 0.6, 50000usd/btc, btc 0.000012
+            if ctx.remaining_accounts[3].key() == USDC_MINT
+                || ctx.remaining_accounts[3].key() == USDT_MINT
+            {
+                output_amount = output_amount
+                    .checked_sub(600000)
+                    .ok_or(GatewayError::InsufficientBalance)?;
+            } else if ctx.remaining_accounts[3].key() == CB_BTC_MINT {
+                output_amount = output_amount
+                    .checked_sub(1200)
+                    .ok_or(GatewayError::InsufficientBalance)?;
+            } else {
+                return Err(GatewayError::InvalidMint.into());
+            }
         }
         // transfer token
         let cpi_accounts = token::Transfer {
@@ -103,25 +133,26 @@ pub fn on_call<'info>(
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let config_signer: &[&[&[u8]]] = &[&[CONFIG_SEED, &[ctx.bumps.config]]];
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, config_signer);
-        token::transfer(cpi_ctx, amount)?;
+        token::transfer(cpi_ctx, output_amount)?;
         ctx.remaining_accounts[3].key()
     } else {
         return Err(GatewayError::InvalidRemainingAccounts.into());
     };
 
     msg!(
-        "EddyCrossChainReceive {} {} {} {}",
+        "EddyCrossChainReceive {} {} {} {} {}",
         hex::encode(external_id),
         token,
         receiver,
-        amount
+        amount,
+        output_amount
     );
     emit!(EddyCrossChainReceive {
         external_id,
         from_token: token,
         to_token: token,
         amount,
-        output_amount: amount,
+        output_amount,
         wallet_address: receiver,
         payload: swap_data,
     });

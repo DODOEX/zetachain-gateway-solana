@@ -24,4 +24,6 @@ pub enum GatewayError {
     TransferFailed,
     #[msg("Invalid receiver account")]
     InvalidReceiverAccount,
+    #[msg("Invalid mint")]
+    InvalidMint,
 }
